@@ -1,0 +1,19 @@
+{
+  "sample_count": 216001,
+  "start_block": 24183312,
+  "end_block": 24399312,
+  "post_every_blocks": 10,
+  "l2_gas_per_l1_block": 12000000.0,
+  "l1_gas_used": 1000000,
+  "num_blobs": 2,
+  "priority_fee_gwei": 0.0,
+  "gas_price_multiplier": 1.0,
+  "blob_price_multiplier": 1.0,
+  "implied_gas_per_l2_gas": 0.008333333333333333,
+  "implied_blob_gas_per_l2_gas": 0.0021845333333333334,
+  "batches_count": 21600,
+  "total_revenue_eth": 7.110365211240008,
+  "total_cost_eth": 7.106957191971881,
+  "total_net_eth": 0.003408019268127744,
+  "avg_batch_revenue_to_cost": 1.00342109502438
+}
