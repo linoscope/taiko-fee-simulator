@@ -75,7 +75,7 @@ def make_rpc(session, rpc_url):
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch Ethereum L1 fee history and export CSV+summary")
-    parser.add_argument("--days", type=int, default=30, help="Number of days to fetch (default: 30)")
+    parser.add_argument("--days", type=int, default=365, help="Number of days to fetch (default: 365)")
     parser.add_argument(
         "--rpc",
         default="https://ethereum-rpc.publicnode.com",
