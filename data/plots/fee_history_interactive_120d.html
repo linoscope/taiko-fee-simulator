@@ -71,24 +71,28 @@
         <div class="assumptions-title">L2 posting assumptions</div>
         <div class="controls">
           <label>Post every N L1 blocks <input id="postEveryBlocks" type="number" min="1" step="1" value="10" /></label>
-          <label>L2 gas / L1 block <input id="l2GasPerL1Block" type="number" min="0" step="100000" value="12000000" /></label>
+          <label>L2 gas / L2 block <input id="l2GasPerL2Block" type="number" min="0" step="100000" value="10000000" /></label>
+          <label>L2 block time (s) <input id="l2BlockTimeSec" type="number" min="0.1" step="0.1" value="2" /></label>
           <label>L1 gas used <input id="l1GasUsed" type="number" min="0" step="1000" value="100000" /></label>
           <label>Blobs <input id="numBlobs" type="number" min="0" step="1" value="2" /></label>
-          <label>Priority fee (gwei) <input id="priorityFeeGwei" type="number" min="0" step="0.01" value="0" /></label>
-          <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.01" value="1.0" /></label>
-          <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.01" value="1.0" /></label>
+          <label>Priority fee (gwei) <input id="priorityFeeGwei" type="number" min="0" step="0.01" value="1" /></label>
+          <label><input id="autoAlpha" type="checkbox" checked /> Auto alpha</label>
+          <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0.000167" /></label>
+          <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.000437" /></label>
           <label>Min fee (gwei/L2 gas) <input id="minFeeGwei" type="number" min="0" step="0.0001" value="0" /></label>
-          <label>Max fee (gwei/L2 gas) <input id="maxFeeGwei" type="number" min="0" step="0.0001" value="10.0" /></label>
+          <label>Max fee (gwei/L2 gas) <input id="maxFeeGwei" type="number" min="0" step="0.0001" value="1.0" /></label>
           <label>Initial vault (ETH) <input id="initialVaultEth" type="number" min="0" step="0.1" value="10" /></label>
           <label>Target vault (ETH) <input id="targetVaultEth" type="number" min="0" step="0.1" value="10" /></label>
           <button class="primary" id="recalcBtn">Recompute derived charts</button>
         </div>
         <div class="formula">cost_wei(post_t) = l1GasUsed * (baseFee_t + priorityFee) + numBlobs * 131072 * blobBaseFee_t</div>
-        <div class="formula">fee_wei = clamp(alpha_gas * gas_unit_wei + alpha_blob * blob_unit_wei, minFee, maxFee)</div>
-        <div class="formula">posting events at (i + 1) % postEveryBlocks == 0; derived <strong id="derivedL2GasPerProposal">-</strong></div>
+        <div class="formula">fee_wei = clamp(alpha_gas * (baseFee + priorityFee) + alpha_blob * blobBaseFee, minFee, maxFee)</div>
+        <div class="formula">auto alpha uses alpha_gas = l1GasUsed / l2GasPerProposal, alpha_blob = (numBlobs * 131072) / l2GasPerProposal</div>
+        <div class="formula">Assume L1 block time = 12s; derived <strong id="derivedL2GasPerL1Block">-</strong> and <strong id="derivedL2GasPerProposal">-</strong></div>
+        <div class="formula">posting events at (i + 1) % postEveryBlocks == 0</div>
         <div class="metrics">
           <span>Latest hypothetical posting cost: <strong id="latestPostingCost">-</strong></span>
-          <span>Latest required L2 fee (alpha=1): <strong id="latestRequiredFee">-</strong></span>
+          <span>Latest required L2 fee (cost-side reference): <strong id="latestRequiredFee">-</strong></span>
           <span>Latest charged L2 fee: <strong id="latestChargedFee">-</strong></span>
           <span>Latest gas component fee: <strong id="latestGasComponentFee">-</strong></span>
           <span>Latest blob component fee: <strong id="latestBlobComponentFee">-</strong></span>
