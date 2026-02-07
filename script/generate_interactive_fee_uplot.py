@@ -60,6 +60,7 @@ def build_app_js(blocks, base, blob):
   const L1_BLOCK_TIME_SECONDS = {L1_BLOCK_TIME_SECONDS};
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
+  const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
 
   const minInput = document.getElementById('minBlock');
   const maxInput = document.getElementById('maxBlock');
@@ -69,6 +70,8 @@ def build_app_js(blocks, base, blob):
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
   const l2GasPerL2BlockInput = document.getElementById('l2GasPerL2Block');
   const l2BlockTimeSecInput = document.getElementById('l2BlockTimeSec');
+  const l2GasScenarioInput = document.getElementById('l2GasScenario');
+  const l2DemandRegimeInput = document.getElementById('l2DemandRegime');
   const l1GasUsedInput = document.getElementById('l1GasUsed');
   const numBlobsInput = document.getElementById('numBlobs');
   const priorityFeeGweiInput = document.getElementById('priorityFeeGwei');
@@ -87,9 +90,11 @@ def build_app_js(blocks, base, blob):
   const latestChargedFee = document.getElementById('latestChargedFee');
   const latestGasComponentFee = document.getElementById('latestGasComponentFee');
   const latestBlobComponentFee = document.getElementById('latestBlobComponentFee');
+  const latestL2GasUsed = document.getElementById('latestL2GasUsed');
   const latestVaultValue = document.getElementById('latestVaultValue');
   const latestVaultGap = document.getElementById('latestVaultGap');
 
+  const l2GasWrap = document.getElementById('l2GasPlot');
   const baseWrap = document.getElementById('basePlot');
   const blobWrap = document.getElementById('blobPlot');
   const costWrap = document.getElementById('costPlot');
@@ -130,6 +135,62 @@ def build_app_js(blocks, base, blob):
     return Math.floor(v);
   }}
 
+  function clampNum(x, lo, hi) {{
+    return Math.max(lo, Math.min(hi, x));
+  }}
+
+  function makeRng(seed) {{
+    let s = seed >>> 0;
+    return function () {{
+      s = (1664525 * s + 1013904223) >>> 0;
+      return s / 4294967296;
+    }};
+  }}
+
+  function gaussian(rng) {{
+    const u1 = Math.max(1e-12, rng());
+    const u2 = rng();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }}
+
+  function buildL2GasSeries(n, baseGasPerL1Block, scenario) {{
+    const out = new Array(n);
+    if (scenario === 'constant') {{
+      for (let i = 0; i < n; i++) out[i] = baseGasPerL1Block;
+      return out;
+    }}
+
+    const cfg = scenario === 'steady'
+      ? {{ rho: 0.97, sigma: 0.03, jumpProb: 0.0, jumpSigma: 0.0, lo: 0.75, hi: 1.35 }}
+      : scenario === 'bursty'
+        ? {{ rho: 0.90, sigma: 0.16, jumpProb: 0.035, jumpSigma: 0.45, lo: 0.25, hi: 3.5 }}
+        : {{ rho: 0.94, sigma: 0.08, jumpProb: 0.01, jumpSigma: 0.20, lo: 0.45, hi: 2.0 }}; // normal
+
+    const rng = makeRng(0x1234abcd);
+    let x = 0;
+    for (let i = 0; i < n; i++) {{
+      x = cfg.rho * x + cfg.sigma * gaussian(rng);
+      if (cfg.jumpProb > 0 && rng() < cfg.jumpProb) x += cfg.jumpSigma * gaussian(rng);
+      const m = clampNum(Math.exp(x), cfg.lo, cfg.hi);
+      out[i] = baseGasPerL1Block * m;
+    }}
+
+    // Mean-neutralize scenario throughput so randomness adds volatility, not systematic bias.
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += out[i];
+    const avg = n > 0 ? (sum / n) : baseGasPerL1Block;
+    if (avg > 0) {{
+      const scale = baseGasPerL1Block / avg;
+      for (let i = 0; i < n; i++) out[i] *= scale;
+    }}
+
+    return out;
+  }}
+
+  let derivedL2GasPerL1Block = [];
+  let derivedL2GasPerL1BlockBase = [];
+  let derivedL2GasPerL2Block = [];
+  let derivedL2GasPerL2BlockBase = [];
   let derivedGasCostEth = [];
   let derivedBlobCostEth = [];
   let derivedPostingCostEth = [];
@@ -144,21 +205,25 @@ def build_app_js(blocks, base, blob):
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
     const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
     const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
+    const l2GasScenario = l2GasScenarioInput.value || 'constant';
+    const l2DemandRegime = l2DemandRegimeInput.value || 'base';
+    const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
     const l2BlocksPerL1Block = l2BlockTimeSec > 0 ? (L1_BLOCK_TIME_SECONDS / l2BlockTimeSec) : 0;
-    const l2GasPerL1Block = l2GasPerL2Block * l2BlocksPerL1Block;
+    const l2GasPerL1BlockBase = l2GasPerL2Block * l2BlocksPerL1Block;
+    const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
     const minFeeGwei = parsePositive(minFeeGweiInput, 0);
-    const maxFeeGwei = parsePositive(maxFeeGweiInput, 10);
+    const maxFeeGwei = parsePositive(maxFeeGweiInput, 1);
     const initialVaultEth = parsePositive(initialVaultEthInput, 0);
     const targetVaultEth = parsePositive(targetVaultEthInput, 0);
 
-    const l2GasPerProposal = l2GasPerL1Block * postEveryBlocks;
+    const l2GasPerProposalBase = l2GasPerL1BlockBase * postEveryBlocks;
     const autoAlphaEnabled = autoAlphaInput.checked;
-    const autoAlphaGas = l2GasPerProposal > 0 ? (l1GasUsed / l2GasPerProposal) : 0;
+    const autoAlphaGas = l2GasPerProposalBase > 0 ? (l1GasUsed / l2GasPerProposalBase) : 0;
     const autoAlphaBlob =
-      l2GasPerProposal > 0 ? ((numBlobs * BLOB_GAS_PER_BLOB) / l2GasPerProposal) : 0;
+      l2GasPerProposalBase > 0 ? ((numBlobs * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
     if (autoAlphaEnabled) {{
       alphaGasInput.value = autoAlphaGas.toFixed(6);
       alphaBlobInput.value = autoAlphaBlob.toFixed(6);
@@ -172,10 +237,25 @@ def build_app_js(blocks, base, blob):
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
 
-    derivedL2GasPerL1BlockText.textContent = `${{formatNum(l2GasPerL1Block, 0)}} gas/L1 block`;
-    derivedL2GasPerProposalText.textContent = `${{formatNum(l2GasPerProposal, 0)}} gas/proposal`;
+    derivedL2GasPerL1BlockText.textContent =
+      `${{formatNum(l2GasPerL1BlockBase, 0)}} gas/L1 block (base), ` +
+      `${{formatNum(l2GasPerL1BlockTarget, 0)}} gas/L1 block (target)`;
+    derivedL2GasPerProposalText.textContent = `${{formatNum(l2GasPerProposalBase, 0)}} gas/proposal (base)`;
 
     const n = blocks.length;
+    derivedL2GasPerL1Block = buildL2GasSeries(n, l2GasPerL1BlockTarget, l2GasScenario);
+    derivedL2GasPerL1BlockBase = new Array(n).fill(l2GasPerL1BlockTarget);
+    if (l2BlocksPerL1Block > 0) {{
+      derivedL2GasPerL2Block = derivedL2GasPerL1Block.map(function (x) {{
+        return x / l2BlocksPerL1Block;
+      }});
+      derivedL2GasPerL2BlockBase = derivedL2GasPerL1BlockBase.map(function (x) {{
+        return x / l2BlocksPerL1Block;
+      }});
+    }} else {{
+      derivedL2GasPerL2Block = new Array(n).fill(0);
+      derivedL2GasPerL2BlockBase = new Array(n).fill(0);
+    }}
     derivedGasCostEth = new Array(n);
     derivedBlobCostEth = new Array(n);
     derivedPostingCostEth = new Array(n);
@@ -196,6 +276,8 @@ def build_app_js(blocks, base, blob):
       const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
       const blobCostWei = numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
       const totalCostWei = gasCostWei + blobCostWei;
+      const l2GasPerL1Block_i = derivedL2GasPerL1Block[i];
+      const l2GasPerProposal_i = l2GasPerL1Block_i * postEveryBlocks;
 
       derivedGasCostEth[i] = gasCostWei / 1e18;
       derivedBlobCostEth[i] = blobCostWei / 1e18;
@@ -210,15 +292,15 @@ def build_app_js(blocks, base, blob):
       derivedBlobFeeComponentGwei[i] = blobComponentWei / 1e9;
       derivedChargedFeeGwei[i] = chargedFeeWeiPerL2Gas / 1e9;
 
-      if (l2GasPerProposal > 0) {{
-        const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal;
+      if (l2GasPerProposal_i > 0) {{
+        const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
         derivedRequiredFeeGwei[i] = breakEvenFeeWeiPerL2Gas / 1e9;
       }} else {{
         derivedRequiredFeeGwei[i] = null;
       }}
 
       const l2RevenueEthPerBlock =
-        (chargedFeeWeiPerL2Gas * l2GasPerL1Block) / 1e18;
+        (chargedFeeWeiPerL2Gas * l2GasPerL1Block_i) / 1e18;
       // Post-time settlement: revenue is recognized only at posting blocks.
       pendingRevenueEth += l2RevenueEthPerBlock;
 
@@ -234,7 +316,8 @@ def build_app_js(blocks, base, blob):
       derivedVaultTargetEth[i] = targetVaultEth;
     }}
 
-    if (costPlot && requiredFeePlot && vaultPlot) {{
+    if (l2GasPlot && costPlot && requiredFeePlot && vaultPlot) {{
+      l2GasPlot.setData([blocks, derivedL2GasPerL2Block, derivedL2GasPerL2BlockBase]);
       costPlot.setData([blocks, derivedGasCostEth, derivedBlobCostEth, derivedPostingCostEth]);
       requiredFeePlot.setData([
         blocks,
@@ -252,11 +335,13 @@ def build_app_js(blocks, base, blob):
       latestChargedFee.textContent = 'n/a';
       latestGasComponentFee.textContent = 'n/a';
       latestBlobComponentFee.textContent = 'n/a';
+      latestL2GasUsed.textContent = 'n/a';
     }} else {{
       latestRequiredFee.textContent = `${{formatNum(derivedRequiredFeeGwei[lastIdx], 4)}} gwei/L2gas`;
       latestChargedFee.textContent = `${{formatNum(derivedChargedFeeGwei[lastIdx], 4)}} gwei/L2gas`;
       latestGasComponentFee.textContent = `${{formatNum(derivedGasFeeComponentGwei[lastIdx], 4)}} gwei/L2gas`;
       latestBlobComponentFee.textContent = `${{formatNum(derivedBlobFeeComponentGwei[lastIdx], 4)}} gwei/L2gas`;
+      latestL2GasUsed.textContent = `${{formatNum(derivedL2GasPerL2Block[lastIdx], 0)}} gas/L2 block`;
     }}
     latestVaultValue.textContent = `${{formatNum(derivedVaultEth[lastIdx], 6)}} ETH`;
     latestVaultGap.textContent = `${{formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)}} ETH`;
@@ -275,12 +360,13 @@ def build_app_js(blocks, base, blob):
   let syncing = false;
   let basePlot;
   let blobPlot;
+  let l2GasPlot;
   let costPlot;
   let requiredFeePlot;
   let vaultPlot;
 
   function allPlots() {{
-    return [basePlot, blobPlot, costPlot, requiredFeePlot, vaultPlot].filter(Boolean);
+    return [basePlot, blobPlot, l2GasPlot, costPlot, requiredFeePlot, vaultPlot].filter(Boolean);
   }}
 
   function onSetScale(u, key) {{
@@ -421,6 +507,32 @@ def build_app_js(blocks, base, blob):
     blobWrap
   );
 
+  l2GasPlot = new uPlot(
+    {{
+      title: 'L2 Gas Used (Scenario)',
+      width,
+      height: 320,
+      scales: {{ x: {{ time: false }} }},
+      series: [
+        {{}},
+        {{ label: 'L2 gas / L2 block (scenario)', stroke: '#0f766e', width: 1.4 }},
+        {{ label: 'L2 gas / L2 block (target)', stroke: '#94a3b8', width: 1.0 }}
+      ],
+      axes: [
+        {{ label: 'L1 Block Number' }},
+        {{ label: 'gas / L2 block' }}
+      ],
+      cursor: {{
+        drag: {{ x: true, y: false, setScale: true }}
+      }},
+      hooks: {{
+        setScale: [onSetScale]
+      }}
+    }},
+    [blocks, [], []],
+    l2GasWrap
+  );
+
   costPlot = new uPlot(
     makeCostOpts(width, 320),
     [blocks, [], [], []],
@@ -472,6 +584,8 @@ def build_app_js(blocks, base, blob):
     postEveryBlocksInput,
     l2GasPerL2BlockInput,
     l2BlockTimeSecInput,
+    l2GasScenarioInput,
+    l2DemandRegimeInput,
     l1GasUsedInput,
     numBlobsInput,
     priorityFeeGweiInput,
@@ -500,7 +614,26 @@ def build_app_js(blocks, base, blob):
 """
 
 
-def build_html(title, js_filename):
+def build_html(title, js_filename, current_html_name=None, range_options=None):
+    range_options = range_options or []
+    current_html_name = current_html_name or ""
+    range_selector_html = ""
+    if range_options:
+        opts = []
+        for value, label in range_options:
+            selected = " selected" if value == current_html_name else ""
+            opts.append(f'<option value="{value}"{selected}>{label}</option>')
+        options_html = "\n".join(opts)
+        range_selector_html = f"""
+        <div class=\"controls\">
+          <label>Data range
+            <select id=\"datasetRange\">
+              {options_html}
+            </select>
+          </label>
+        </div>
+"""
+
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -524,13 +657,28 @@ def build_html(title, js_filename):
       color: var(--text);
       background: linear-gradient(180deg, #eef2ff 0%, var(--bg) 35%, var(--bg) 100%);
     }}
-    .wrap {{ max-width: 1400px; margin: 20px auto; padding: 0 16px 24px; }}
+    .wrap {{ max-width: 1800px; margin: 20px auto; padding: 0 16px 24px; }}
+    .layout {{
+      display: grid;
+      grid-template-columns: 440px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 12px;
       padding: 14px;
       box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+    }}
+    .sidebar {{
+      position: sticky;
+      top: 12px;
+      max-height: calc(100vh - 24px);
+      overflow: auto;
+    }}
+    .content {{
+      min-width: 0;
     }}
     h1 {{ margin: 0 0 10px; font-size: 22px; }}
     .sub {{ margin: 0 0 12px; color: var(--muted); font-size: 13px; }}
@@ -544,7 +692,7 @@ def build_html(title, js_filename):
     }}
     .assumptions-title {{ font-size: 13px; color: var(--muted); margin-bottom: 8px; }}
     label {{ font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }}
-    input[type=number] {{ width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }}
+    input[type=number], select {{ width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }}
     button {{ border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }}
     button.primary {{ border-color: transparent; background: var(--accent); color: #fff; }}
     .range-text {{ margin-left: auto; font-size: 12px; color: var(--muted); }}
@@ -556,63 +704,98 @@ def build_html(title, js_filename):
 </head>
 <body>
   <div class=\"wrap\">
-    <div class=\"panel\">
-      <h1>{title}</h1>
-      <p class=\"sub\">Drag horizontally inside any chart to zoom. Block range controls and zoom are synchronized across all charts.</p>
+    <h1>{title}</h1>
+    <p class=\"sub\">Drag horizontally inside any chart to zoom. Block range controls and zoom are synchronized across all charts.</p>
 
-      <div class=\"controls\">
-        <label>Min block <input id=\"minBlock\" type=\"number\" /></label>
-        <label>Max block <input id=\"maxBlock\" type=\"number\" /></label>
-        <button class=\"primary\" id=\"applyBtn\">Apply range</button>
-        <button id=\"resetBtn\">Reset full range</button>
-        <button id=\"tail20kBtn\">Last 20k blocks</button>
-        <button id=\"tail5kBtn\">Last 5k blocks</button>
-        <span class=\"range-text\" id=\"rangeText\"></span>
-      </div>
-
-      <div class=\"assumptions\">
-        <div class=\"assumptions-title\">L2 posting assumptions</div>
+    <div class=\"layout\">
+      <aside class=\"panel sidebar\">
+        {range_selector_html}
         <div class=\"controls\">
-          <label>Post every N L1 blocks <input id=\"postEveryBlocks\" type=\"number\" min=\"1\" step=\"1\" value=\"{DEFAULT_POST_EVERY_BLOCKS}\" /></label>
-          <label>L2 gas / L2 block <input id=\"l2GasPerL2Block\" type=\"number\" min=\"0\" step=\"100000\" value=\"{DEFAULT_L2_GAS_PER_L2_BLOCK}\" /></label>
-          <label>L2 block time (s) <input id=\"l2BlockTimeSec\" type=\"number\" min=\"0.1\" step=\"0.1\" value=\"{DEFAULT_L2_BLOCK_TIME_SECONDS}\" /></label>
-          <label>L1 gas used <input id=\"l1GasUsed\" type=\"number\" min=\"0\" step=\"1000\" value=\"{DEFAULT_L1_GAS_USED}\" /></label>
-          <label>Blobs <input id=\"numBlobs\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_NUM_BLOBS}\" /></label>
-          <label>Priority fee (gwei) <input id=\"priorityFeeGwei\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_PRIORITY_FEE_GWEI:g}\" /></label>
-          <label><input id=\"autoAlpha\" type=\"checkbox\" checked /> Auto alpha</label>
-          <label>Alpha gas <input id=\"alphaGas\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_GAS:.6f}\" /></label>
-          <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
-          <label>Min fee (gwei/L2 gas) <input id=\"minFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MIN_FEE_GWEI:g}\" /></label>
-          <label>Max fee (gwei/L2 gas) <input id=\"maxFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MAX_FEE_GWEI:.1f}\" /></label>
-          <label>Initial vault (ETH) <input id=\"initialVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_INITIAL_VAULT_ETH:g}\" /></label>
-          <label>Target vault (ETH) <input id=\"targetVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_TARGET_VAULT_ETH:g}\" /></label>
-          <button class=\"primary\" id=\"recalcBtn\">Recompute derived charts</button>
+          <label>Min block <input id=\"minBlock\" type=\"number\" /></label>
+          <label>Max block <input id=\"maxBlock\" type=\"number\" /></label>
+          <button class=\"primary\" id=\"applyBtn\">Apply range</button>
+          <button id=\"resetBtn\">Reset full range</button>
+          <button id=\"tail20kBtn\">Last 20k blocks</button>
+          <button id=\"tail5kBtn\">Last 5k blocks</button>
+          <span class=\"range-text\" id=\"rangeText\"></span>
         </div>
-        <div class=\"formula\">cost_wei(post_t) = l1GasUsed * (baseFee_t + priorityFee) + numBlobs * 131072 * blobBaseFee_t</div>
-        <div class=\"formula\">fee_wei = clamp(alpha_gas * (baseFee + priorityFee) + alpha_blob * blobBaseFee, minFee, maxFee)</div>
-        <div class=\"formula\">auto alpha uses alpha_gas = l1GasUsed / l2GasPerProposal, alpha_blob = (numBlobs * 131072) / l2GasPerProposal</div>
-        <div class=\"formula\">Assume L1 block time = 12s; derived <strong id=\"derivedL2GasPerL1Block\">-</strong> and <strong id=\"derivedL2GasPerProposal\">-</strong></div>
-        <div class=\"formula\">posting events at (i + 1) % postEveryBlocks == 0</div>
-        <div class=\"metrics\">
-          <span>Latest hypothetical posting cost: <strong id=\"latestPostingCost\">-</strong></span>
-          <span>Latest required L2 fee (cost-side reference): <strong id=\"latestRequiredFee\">-</strong></span>
-          <span>Latest charged L2 fee: <strong id=\"latestChargedFee\">-</strong></span>
-          <span>Latest gas component fee: <strong id=\"latestGasComponentFee\">-</strong></span>
-          <span>Latest blob component fee: <strong id=\"latestBlobComponentFee\">-</strong></span>
-          <span>Latest vault value: <strong id=\"latestVaultValue\">-</strong></span>
-          <span>Vault - target: <strong id=\"latestVaultGap\">-</strong></span>
-        </div>
-      </div>
 
-      <div class=\"status\" id=\"status\"></div>
-      <div id=\"basePlot\" class=\"plot\"></div>
-      <div id=\"blobPlot\" class=\"plot\"></div>
-      <div id=\"costPlot\" class=\"plot\"></div>
-      <div id=\"requiredFeePlot\" class=\"plot\"></div>
-      <div id=\"vaultPlot\" class=\"plot\"></div>
+        <div class=\"assumptions\">
+          <div class=\"assumptions-title\">L2 posting assumptions</div>
+          <div class=\"controls\">
+            <label>Post every N L1 blocks <input id=\"postEveryBlocks\" type=\"number\" min=\"1\" step=\"1\" value=\"{DEFAULT_POST_EVERY_BLOCKS}\" /></label>
+            <label>L2 gas / L2 block <input id=\"l2GasPerL2Block\" type=\"number\" min=\"0\" step=\"100000\" value=\"{DEFAULT_L2_GAS_PER_L2_BLOCK}\" /></label>
+            <label>L2 block time (s) <input id=\"l2BlockTimeSec\" type=\"number\" min=\"0.1\" step=\"0.1\" value=\"{DEFAULT_L2_BLOCK_TIME_SECONDS}\" /></label>
+            <label>L2 gas scenario
+              <select id=\"l2GasScenario\">
+                <option value=\"constant\">constant</option>
+                <option value=\"steady\">steady</option>
+                <option value=\"normal\" selected>normal</option>
+                <option value=\"bursty\">bursty</option>
+              </select>
+            </label>
+            <label>Demand regime
+              <select id=\"l2DemandRegime\">
+                <option value=\"low\">low</option>
+                <option value=\"base\" selected>base</option>
+                <option value=\"high\">high</option>
+              </select>
+            </label>
+            <label>L1 gas used <input id=\"l1GasUsed\" type=\"number\" min=\"0\" step=\"1000\" value=\"{DEFAULT_L1_GAS_USED}\" /></label>
+            <label>Blobs <input id=\"numBlobs\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_NUM_BLOBS}\" /></label>
+            <label>Priority fee (gwei) <input id=\"priorityFeeGwei\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_PRIORITY_FEE_GWEI:g}\" /></label>
+            <label><input id=\"autoAlpha\" type=\"checkbox\" checked /> Auto alpha</label>
+            <label>Alpha gas <input id=\"alphaGas\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_GAS:.6f}\" /></label>
+            <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
+            <label>Min fee (gwei/L2 gas) <input id=\"minFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MIN_FEE_GWEI:g}\" /></label>
+            <label>Max fee (gwei/L2 gas) <input id=\"maxFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MAX_FEE_GWEI:.1f}\" /></label>
+            <label>Initial vault (ETH) <input id=\"initialVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_INITIAL_VAULT_ETH:g}\" /></label>
+            <label>Target vault (ETH) <input id=\"targetVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_TARGET_VAULT_ETH:g}\" /></label>
+            <button class=\"primary\" id=\"recalcBtn\">Recompute derived charts</button>
+          </div>
+          <div class=\"formula\">cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</div>
+          <div class=\"formula\">fee_wei(t) = clamp(alpha_gas * (baseFee_t + priorityFee) + alpha_blob * blobBaseFee_t, minFee, maxFee)</div>
+          <div class=\"formula\">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
+          <div class=\"formula\">Assume L1 block time = 12s; derived <strong id=\"derivedL2GasPerL1Block\">-</strong> and <strong id=\"derivedL2GasPerProposal\">-</strong></div>
+          <div class=\"formula\">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
+          <div class=\"formula\">L2 gas scenarios are mean-neutralized around the demand-adjusted throughput target</div>
+          <div class=\"formula\">posting events at (i + 1) % postEveryBlocks == 0; revenue is settled to vault at post time</div>
+          <div class=\"metrics\">
+            <span>Latest hypothetical posting cost: <strong id=\"latestPostingCost\">-</strong></span>
+            <span>Latest required L2 fee (cost-side reference): <strong id=\"latestRequiredFee\">-</strong></span>
+            <span>Latest charged L2 fee: <strong id=\"latestChargedFee\">-</strong></span>
+            <span>Latest gas component fee: <strong id=\"latestGasComponentFee\">-</strong></span>
+            <span>Latest blob component fee: <strong id=\"latestBlobComponentFee\">-</strong></span>
+            <span>Latest L2 gas used: <strong id=\"latestL2GasUsed\">-</strong></span>
+            <span>Latest vault value: <strong id=\"latestVaultValue\">-</strong></span>
+            <span>Vault - target: <strong id=\"latestVaultGap\">-</strong></span>
+          </div>
+        </div>
+
+        <div class=\"status\" id=\"status\"></div>
+      </aside>
+
+      <main class=\"content\">
+        <div id=\"basePlot\" class=\"plot\"></div>
+        <div id=\"blobPlot\" class=\"plot\"></div>
+        <div id=\"l2GasPlot\" class=\"plot\"></div>
+        <div id=\"costPlot\" class=\"plot\"></div>
+        <div id=\"requiredFeePlot\" class=\"plot\"></div>
+        <div id=\"vaultPlot\" class=\"plot\"></div>
+      </main>
     </div>
   </div>
 
+  <script>
+    (function () {{
+      var rangeSel = document.getElementById('datasetRange');
+      if (!rangeSel) return;
+      rangeSel.addEventListener('change', function () {{
+        var target = rangeSel.value;
+        if (target) window.location.href = target;
+      }});
+    }})();
+  </script>
   <script src=\"./uPlot.iife.min.js\"></script>
   <script src=\"./{js_filename}\"></script>
 </body>
@@ -626,6 +809,12 @@ def main():
     parser.add_argument("--out-html", required=True, help="Output HTML path")
     parser.add_argument("--out-js", required=True, help="Output JS path")
     parser.add_argument("--title", default="Ethereum + L2 Posting Cost Explorer", help="Page title")
+    parser.add_argument(
+        "--range-option",
+        action="append",
+        default=[],
+        help="Optional range switcher option in the form '<html_filename>|<label>'",
+    )
     args = parser.parse_args()
 
     csv_path = Path(args.csv).resolve()
@@ -638,7 +827,16 @@ def main():
     out_js.parent.mkdir(parents=True, exist_ok=True)
 
     out_js.write_text(build_app_js(blocks, base, blob))
-    out_html.write_text(build_html(args.title, out_js.name))
+    range_options = []
+    for opt in args.range_option:
+        if "|" in opt:
+            value, label = opt.split("|", 1)
+            value = value.strip()
+            label = label.strip()
+            if value and label:
+                range_options.append((value, label))
+
+    out_html.write_text(build_html(args.title, out_js.name, out_html.name, range_options))
 
     print(out_html)
     print(out_js)

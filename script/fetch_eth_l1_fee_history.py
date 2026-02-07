@@ -88,12 +88,26 @@ def main():
     )
     parser.add_argument("--blocks-per-day", type=int, default=7200, help="Assumed blocks/day")
     parser.add_argument("--chunk", type=int, default=1024, help="feeHistory blockCount per RPC call")
+    parser.add_argument(
+        "--end-block",
+        default=None,
+        help="Optional ending block number for the window (default: current head). Accepts decimal or 0x-prefixed hex.",
+    )
     args = parser.parse_args()
 
     session = requests.Session()
     rpc = make_rpc(session, args.rpc)
 
-    latest = int(rpc("eth_blockNumber", []), 16)
+    chain_head = int(rpc("eth_blockNumber", []), 16)
+    if args.end_block is None:
+        latest = chain_head
+    else:
+        latest = int(args.end_block, 0)
+        if latest < 0:
+            raise ValueError("--end-block must be non-negative")
+        if latest > chain_head:
+            raise ValueError(f"--end-block {latest} is above chain head {chain_head}")
+
     latest_blk = rpc("eth_getBlockByNumber", [hex(latest), False], rid=3)
     latest_ts = int(latest_blk["timestamp"], 16)
 
@@ -154,6 +168,9 @@ def main():
         "start_block": rows[0]["block_number"],
         "end_block": rows[-1]["block_number"],
         "sample_count": len(rows),
+        "chain_head_block": chain_head,
+        "window_end_block": latest,
+        "window_end_timestamp_utc": datetime.fromtimestamp(latest_ts, tz=timezone.utc).isoformat(),
         "latest_block_timestamp_utc": datetime.fromtimestamp(latest_ts, tz=timezone.utc).isoformat(),
         "assumed_start_timestamp_utc": datetime.fromtimestamp(
             latest_ts - (rows[-1]["block_number"] - rows[0]["block_number"]) * 12,
