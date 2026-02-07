@@ -79,6 +79,7 @@
             <select id="datasetRange">
               <option value="fee_history_interactive_365d.html" selected>Recent 365d (2025-02 to 2026-02)</option>
 <option value="fee_history_interactive_365d_prior.html">Prior 365d (2024-02 to 2025-02)</option>
+<option value="fee_history_interactive_2021.html">Year 2021</option>
             </select>
           </label>
         </div>
@@ -117,9 +118,23 @@
             <label>L1 gas used <input id="l1GasUsed" type="number" min="0" step="1000" value="100000" /></label>
             <label>Blobs <input id="numBlobs" type="number" min="0" step="1" value="2" /></label>
             <label>Priority fee (gwei) <input id="priorityFeeGwei" type="number" min="0" step="0.01" value="1" /></label>
+            <label>Controller mode
+              <select id="controllerMode">
+                <option value="alpha-only" selected>alpha-only</option>
+                <option value="p">p</option>
+                <option value="pi">pi</option>
+                <option value="pi+ff">pi+ff</option>
+              </select>
+            </label>
             <label><input id="autoAlpha" type="checkbox" checked /> Auto alpha</label>
             <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0.000167" /></label>
             <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.000437" /></label>
+            <label>Kp <input id="kp" type="number" min="0" step="0.001" value="0.1" /></label>
+            <label>Ki <input id="ki" type="number" min="0" step="0.001" value="0" /></label>
+            <label>I min <input id="iMin" type="number" step="0.1" value="-5" /></label>
+            <label>I max <input id="iMax" type="number" step="0.1" value="5" /></label>
+            <label>Feedforward delay d_ff (L1 blocks) <input id="dffBlocks" type="number" min="0" step="1" value="0" /></label>
+            <label>Feedback delay d_fb (L1 blocks) <input id="dfbBlocks" type="number" min="0" step="1" value="12" /></label>
             <label>Min fee (gwei/L2 gas) <input id="minFeeGwei" type="number" min="0" step="0.0001" value="0" /></label>
             <label>Max fee (gwei/L2 gas) <input id="maxFeeGwei" type="number" min="0" step="0.0001" value="1.0" /></label>
             <label>Initial vault (ETH) <input id="initialVaultEth" type="number" min="0" step="0.1" value="10" /></label>
@@ -127,7 +142,9 @@
             <button class="primary" id="recalcBtn">Recompute derived charts</button>
           </div>
           <div class="formula">cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</div>
-          <div class="formula">fee_wei(t) = clamp(alpha_gas * (baseFee_t + priorityFee) + alpha_blob * blobBaseFee_t, minFee, maxFee)</div>
+          <div class="formula">FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</div>
+          <div class="formula">D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</div>
+          <div class="formula">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee), minFee, maxFee)</div>
           <div class="formula">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
           <div class="formula">Assume L1 block time = 12s; derived <strong id="derivedL2GasPerL1Block">-</strong> and <strong id="derivedL2GasPerProposal">-</strong></div>
           <div class="formula">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
@@ -139,6 +156,12 @@
             <span>Latest charged L2 fee: <strong id="latestChargedFee">-</strong></span>
             <span>Latest gas component fee: <strong id="latestGasComponentFee">-</strong></span>
             <span>Latest blob component fee: <strong id="latestBlobComponentFee">-</strong></span>
+            <span>Latest deficit D: <strong id="latestDeficitEth">-</strong></span>
+            <span>Latest epsilon: <strong id="latestEpsilon">-</strong></span>
+            <span>Latest integral I: <strong id="latestIntegral">-</strong></span>
+            <span>Latest FF term: <strong id="latestFfTerm">-</strong></span>
+            <span>Latest FB term: <strong id="latestFbTerm">-</strong></span>
+            <span>Latest clamp state: <strong id="latestClampState">-</strong></span>
             <span>Latest L2 gas used: <strong id="latestL2GasUsed">-</strong></span>
             <span>Latest vault value: <strong id="latestVaultValue">-</strong></span>
             <span>Vault - target: <strong id="latestVaultGap">-</strong></span>
@@ -154,6 +177,8 @@
         <div id="l2GasPlot" class="plot"></div>
         <div id="costPlot" class="plot"></div>
         <div id="requiredFeePlot" class="plot"></div>
+        <div id="controllerPlot" class="plot"></div>
+        <div id="feedbackPlot" class="plot"></div>
         <div id="vaultPlot" class="plot"></div>
       </main>
     </div>

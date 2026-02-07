@@ -18,6 +18,13 @@ DEFAULT_MIN_FEE_GWEI = 0.0
 DEFAULT_MAX_FEE_GWEI = 1.0
 DEFAULT_INITIAL_VAULT_ETH = 10.0
 DEFAULT_TARGET_VAULT_ETH = 10.0
+DEFAULT_CONTROLLER_MODE = "alpha-only"
+DEFAULT_D_FF_BLOCKS = 0
+DEFAULT_D_FB_BLOCKS = 12
+DEFAULT_KP = 0.1
+DEFAULT_KI = 0.0
+DEFAULT_I_MIN = -5.0
+DEFAULT_I_MAX = 5.0
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -78,6 +85,13 @@ def build_app_js(blocks, base, blob):
   const autoAlphaInput = document.getElementById('autoAlpha');
   const alphaGasInput = document.getElementById('alphaGas');
   const alphaBlobInput = document.getElementById('alphaBlob');
+  const controllerModeInput = document.getElementById('controllerMode');
+  const dffBlocksInput = document.getElementById('dffBlocks');
+  const dfbBlocksInput = document.getElementById('dfbBlocks');
+  const kpInput = document.getElementById('kp');
+  const kiInput = document.getElementById('ki');
+  const iMinInput = document.getElementById('iMin');
+  const iMaxInput = document.getElementById('iMax');
   const minFeeGweiInput = document.getElementById('minFeeGwei');
   const maxFeeGweiInput = document.getElementById('maxFeeGwei');
   const initialVaultEthInput = document.getElementById('initialVaultEth');
@@ -91,6 +105,12 @@ def build_app_js(blocks, base, blob):
   const latestGasComponentFee = document.getElementById('latestGasComponentFee');
   const latestBlobComponentFee = document.getElementById('latestBlobComponentFee');
   const latestL2GasUsed = document.getElementById('latestL2GasUsed');
+  const latestDeficitEth = document.getElementById('latestDeficitEth');
+  const latestEpsilon = document.getElementById('latestEpsilon');
+  const latestIntegral = document.getElementById('latestIntegral');
+  const latestFfTerm = document.getElementById('latestFfTerm');
+  const latestFbTerm = document.getElementById('latestFbTerm');
+  const latestClampState = document.getElementById('latestClampState');
   const latestVaultValue = document.getElementById('latestVaultValue');
   const latestVaultGap = document.getElementById('latestVaultGap');
 
@@ -99,6 +119,8 @@ def build_app_js(blocks, base, blob):
   const blobWrap = document.getElementById('blobPlot');
   const costWrap = document.getElementById('costPlot');
   const reqWrap = document.getElementById('requiredFeePlot');
+  const controllerWrap = document.getElementById('controllerPlot');
+  const feedbackWrap = document.getElementById('feedbackPlot');
   const vaultWrap = document.getElementById('vaultPlot');
 
   function setStatus(msg) {{
@@ -124,6 +146,16 @@ def build_app_js(blocks, base, blob):
     rangeText.textContent = `Showing blocks ${{a.toLocaleString()}} - ${{b.toLocaleString()}} (${{(b - a + 1).toLocaleString()}} blocks)`;
   }}
 
+  function getCurrentXRange() {{
+    for (const p of allPlots()) {{
+      if (!p || !p.scales || !p.scales.x) continue;
+      const min = p.scales.x.min;
+      const max = p.scales.x.max;
+      if (Number.isFinite(min) && Number.isFinite(max)) return [min, max];
+    }}
+    return null;
+  }}
+
   function parsePositive(inputEl, fallback) {{
     const v = Number(inputEl.value);
     return Number.isFinite(v) && v >= 0 ? v : fallback;
@@ -133,6 +165,60 @@ def build_app_js(blocks, base, blob):
     const v = Number(inputEl.value);
     if (!Number.isFinite(v) || v < 1) return fallback;
     return Math.floor(v);
+  }}
+
+  function parseNonNegativeInt(inputEl, fallback) {{
+    const v = Number(inputEl.value);
+    if (!Number.isFinite(v) || v < 0) return fallback;
+    return Math.floor(v);
+  }}
+
+  function parseNumber(inputEl, fallback) {{
+    const v = Number(inputEl.value);
+    return Number.isFinite(v) ? v : fallback;
+  }}
+
+  function applyControllerModePreset(mode) {{
+    if (mode === 'alpha-only') {{
+      kpInput.value = '0';
+      kiInput.value = '0';
+      const alphaGasNow = parsePositive(alphaGasInput, 0);
+      const alphaBlobNow = parsePositive(alphaBlobInput, 0);
+      if (!autoAlphaInput.checked && alphaGasNow === 0 && alphaBlobNow === 0) {{
+        alphaGasInput.value = DEFAULT_ALPHA_GAS.toFixed(6);
+        alphaBlobInput.value = DEFAULT_ALPHA_BLOB.toFixed(6);
+      }}
+      return;
+    }}
+
+    if (mode === 'p') {{
+      // P-only preset: disable feedforward and integral contribution.
+      autoAlphaInput.checked = false;
+      alphaGasInput.value = '0';
+      alphaBlobInput.value = '0';
+      kiInput.value = '0';
+      return;
+    }}
+
+    if (mode === 'pi') {{
+      // PI-only preset: disable feedforward contribution.
+      autoAlphaInput.checked = false;
+      alphaGasInput.value = '0';
+      alphaBlobInput.value = '0';
+      return;
+    }}
+
+    if (mode === 'pi+ff') {{
+      // PI + feedforward: keep both paths enabled.
+      if (!autoAlphaInput.checked) {{
+        const alphaGasNow = parsePositive(alphaGasInput, 0);
+        const alphaBlobNow = parsePositive(alphaBlobInput, 0);
+        if (alphaGasNow === 0 && alphaBlobNow === 0) {{
+          alphaGasInput.value = DEFAULT_ALPHA_GAS.toFixed(6);
+          alphaBlobInput.value = DEFAULT_ALPHA_BLOB.toFixed(6);
+        }}
+      }}
+    }}
   }}
 
   function clampNum(x, lo, hi) {{
@@ -197,7 +283,15 @@ def build_app_js(blocks, base, blob):
   let derivedRequiredFeeGwei = [];
   let derivedGasFeeComponentGwei = [];
   let derivedBlobFeeComponentGwei = [];
+  let derivedFeedforwardFeeGwei = [];
+  let derivedPTermFeeGwei = [];
+  let derivedITermFeeGwei = [];
+  let derivedFeedbackFeeGwei = [];
   let derivedChargedFeeGwei = [];
+  let derivedDeficitEth = [];
+  let derivedEpsilon = [];
+  let derivedIntegral = [];
+  let derivedClampState = [];
   let derivedVaultEth = [];
   let derivedVaultTargetEth = [];
 
@@ -214,6 +308,15 @@ def build_app_js(blocks, base, blob):
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
+    const controllerMode = controllerModeInput.value || 'alpha-only';
+    const dffBlocks = parseNonNegativeInt(dffBlocksInput, 0);
+    const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 12);
+    const kp = parsePositive(kpInput, 0);
+    const ki = parsePositive(kiInput, 0);
+    const iMinRaw = parseNumber(iMinInput, -5);
+    const iMaxRaw = parseNumber(iMaxInput, 5);
+    const iMin = Math.min(iMinRaw, iMaxRaw);
+    const iMax = Math.max(iMinRaw, iMaxRaw);
     const minFeeGwei = parsePositive(minFeeGweiInput, 0);
     const maxFeeGwei = parsePositive(maxFeeGweiInput, 1);
     const initialVaultEth = parsePositive(initialVaultEthInput, 0);
@@ -236,6 +339,7 @@ def build_app_js(blocks, base, blob):
     const priorityFeeWei = priorityFeeGwei * 1e9;
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
+    const feeRangeWei = maxFeeWei - minFeeWei;
 
     derivedL2GasPerL1BlockText.textContent =
       `${{formatNum(l2GasPerL1BlockBase, 0)}} gas/L1 block (base), ` +
@@ -262,16 +366,28 @@ def build_app_js(blocks, base, blob):
     derivedRequiredFeeGwei = new Array(n);
     derivedGasFeeComponentGwei = new Array(n);
     derivedBlobFeeComponentGwei = new Array(n);
+    derivedFeedforwardFeeGwei = new Array(n);
+    derivedPTermFeeGwei = new Array(n);
+    derivedITermFeeGwei = new Array(n);
+    derivedFeedbackFeeGwei = new Array(n);
     derivedChargedFeeGwei = new Array(n);
+    derivedDeficitEth = new Array(n);
+    derivedEpsilon = new Array(n);
+    derivedIntegral = new Array(n);
+    derivedClampState = new Array(n);
     derivedVaultEth = new Array(n);
     derivedVaultTargetEth = new Array(n);
 
     let vault = initialVaultEth;
     let pendingRevenueEth = 0;
+    let integralState = 0;
 
     for (let i = 0; i < n; i++) {{
       const baseFeeWei = baseFeeGwei[i] * 1e9;
       const blobBaseFeeWei = blobFeeGwei[i] * 1e9;
+      const ffIndex = Math.max(0, i - dffBlocks);
+      const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
+      const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
 
       const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
       const blobCostWei = numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
@@ -282,15 +398,47 @@ def build_app_js(blocks, base, blob):
       derivedGasCostEth[i] = gasCostWei / 1e18;
       derivedBlobCostEth[i] = blobCostWei / 1e18;
       derivedPostingCostEth[i] = totalCostWei / 1e18;
-      const gasComponentWei = alphaGas * (baseFeeWei + priorityFeeWei);
-      const blobComponentWei = alphaBlob * blobBaseFeeWei;
+      const gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
+      const blobComponentWei = alphaBlob * blobBaseFeeFfWei;
+
+      const fbIndex = i - dfbBlocks;
+      const observedVault = fbIndex >= 0 ? derivedVaultEth[fbIndex] : initialVaultEth;
+      const deficitEth = targetVaultEth - observedVault;
+      const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
+
+      if (controllerMode === 'pi' || controllerMode === 'pi+ff') {{
+        integralState = clampNum(integralState + epsilon, iMin, iMax);
+      }} else {{
+        integralState = 0;
+      }}
+
+      const pTermWei = (controllerMode === 'alpha-only') ? 0 : (kp * epsilon * feeRangeWei);
+      const iTermWei =
+        (controllerMode === 'pi' || controllerMode === 'pi+ff')
+          ? (ki * integralState * feeRangeWei)
+          : 0;
+      const feedbackWei = pTermWei + iTermWei;
+      const feedforwardWei = gasComponentWei + blobComponentWei;
       const chargedFeeWeiPerL2Gas = Math.max(
         minFeeWei,
-        Math.min(maxFeeWei, gasComponentWei + blobComponentWei)
+        Math.min(maxFeeWei, feedforwardWei + feedbackWei)
       );
+
+      let clampState = 'none';
+      if (chargedFeeWeiPerL2Gas <= minFeeWei + 1e-9) clampState = 'min';
+      else if (chargedFeeWeiPerL2Gas >= maxFeeWei - 1e-9) clampState = 'max';
+
       derivedGasFeeComponentGwei[i] = gasComponentWei / 1e9;
       derivedBlobFeeComponentGwei[i] = blobComponentWei / 1e9;
+      derivedFeedforwardFeeGwei[i] = feedforwardWei / 1e9;
+      derivedPTermFeeGwei[i] = pTermWei / 1e9;
+      derivedITermFeeGwei[i] = iTermWei / 1e9;
+      derivedFeedbackFeeGwei[i] = feedbackWei / 1e9;
       derivedChargedFeeGwei[i] = chargedFeeWeiPerL2Gas / 1e9;
+      derivedDeficitEth[i] = deficitEth;
+      derivedEpsilon[i] = epsilon;
+      derivedIntegral[i] = integralState;
+      derivedClampState[i] = clampState;
 
       if (l2GasPerProposal_i > 0) {{
         const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
@@ -316,7 +464,9 @@ def build_app_js(blocks, base, blob):
       derivedVaultTargetEth[i] = targetVaultEth;
     }}
 
-    if (l2GasPlot && costPlot && requiredFeePlot && vaultPlot) {{
+    const preservedRange = getCurrentXRange();
+
+    if (l2GasPlot && costPlot && requiredFeePlot && controllerPlot && feedbackPlot && vaultPlot) {{
       l2GasPlot.setData([blocks, derivedL2GasPerL2Block, derivedL2GasPerL2BlockBase]);
       costPlot.setData([blocks, derivedGasCostEth, derivedBlobCostEth, derivedPostingCostEth]);
       requiredFeePlot.setData([
@@ -325,7 +475,25 @@ def build_app_js(blocks, base, blob):
         derivedBlobFeeComponentGwei,
         derivedChargedFeeGwei
       ]);
+      controllerPlot.setData([
+        blocks,
+        derivedFeedforwardFeeGwei,
+        derivedPTermFeeGwei,
+        derivedITermFeeGwei,
+        derivedFeedbackFeeGwei,
+        derivedChargedFeeGwei
+      ]);
+      feedbackPlot.setData([
+        blocks,
+        derivedDeficitEth,
+        derivedEpsilon,
+        derivedIntegral
+      ]);
       vaultPlot.setData([blocks, derivedVaultTargetEth, derivedVaultEth]);
+
+      if (preservedRange) {{
+        applyRange(preservedRange[0], preservedRange[1], null);
+      }}
     }}
 
     const lastIdx = n - 1;
@@ -343,6 +511,12 @@ def build_app_js(blocks, base, blob):
       latestBlobComponentFee.textContent = `${{formatNum(derivedBlobFeeComponentGwei[lastIdx], 4)}} gwei/L2gas`;
       latestL2GasUsed.textContent = `${{formatNum(derivedL2GasPerL2Block[lastIdx], 0)}} gas/L2 block`;
     }}
+    latestDeficitEth.textContent = `${{formatNum(derivedDeficitEth[lastIdx], 6)}} ETH`;
+    latestEpsilon.textContent = `${{formatNum(derivedEpsilon[lastIdx], 6)}}`;
+    latestIntegral.textContent = `${{formatNum(derivedIntegral[lastIdx], 6)}}`;
+    latestFfTerm.textContent = `${{formatNum(derivedFeedforwardFeeGwei[lastIdx], 4)}} gwei/L2gas`;
+    latestFbTerm.textContent = `${{formatNum(derivedFeedbackFeeGwei[lastIdx], 4)}} gwei/L2gas`;
+    latestClampState.textContent = derivedClampState[lastIdx];
     latestVaultValue.textContent = `${{formatNum(derivedVaultEth[lastIdx], 6)}} ETH`;
     latestVaultGap.textContent = `${{formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)}} ETH`;
   }}
@@ -363,10 +537,21 @@ def build_app_js(blocks, base, blob):
   let l2GasPlot;
   let costPlot;
   let requiredFeePlot;
+  let controllerPlot;
+  let feedbackPlot;
   let vaultPlot;
 
   function allPlots() {{
-    return [basePlot, blobPlot, l2GasPlot, costPlot, requiredFeePlot, vaultPlot].filter(Boolean);
+    return [
+      basePlot,
+      blobPlot,
+      l2GasPlot,
+      costPlot,
+      requiredFeePlot,
+      controllerPlot,
+      feedbackPlot,
+      vaultPlot
+    ].filter(Boolean);
   }}
 
   function onSetScale(u, key) {{
@@ -426,7 +611,7 @@ def build_app_js(blocks, base, blob):
 
   function makeRequiredFeeOpts(width, height) {{
     return {{
-      title: 'Decoupled L2 Fee (alpha pass-through + clamped total)',
+      title: 'L2 Fee Components (feedforward + clamped total)',
       width,
       height,
       scales: {{ x: {{ time: false }} }},
@@ -463,6 +648,58 @@ def build_app_js(blocks, base, blob):
       axes: [
         {{ label: 'L1 Block Number' }},
         {{ label: 'ETH' }}
+      ],
+      cursor: {{
+        drag: {{ x: true, y: false, setScale: true }}
+      }},
+      hooks: {{
+        setScale: [onSetScale]
+      }}
+    }};
+  }}
+
+  function makeControllerOpts(width, height) {{
+    return {{
+      title: 'Controller Components (Feedforward + PI)',
+      width,
+      height,
+      scales: {{ x: {{ time: false }} }},
+      series: [
+        {{}},
+        {{ label: 'FF term (gwei/L2 gas)', stroke: '#334155', width: 1.2 }},
+        {{ label: 'P term (gwei/L2 gas)', stroke: '#2563eb', width: 1.0 }},
+        {{ label: 'I term (gwei/L2 gas)', stroke: '#f59e0b', width: 1.0 }},
+        {{ label: 'FB total (gwei/L2 gas)', stroke: '#7c3aed', width: 1.0 }},
+        {{ label: 'Charged fee (gwei/L2 gas)', stroke: '#16a34a', width: 1.4 }}
+      ],
+      axes: [
+        {{ label: 'L1 Block Number' }},
+        {{ label: 'gwei / L2 gas' }}
+      ],
+      cursor: {{
+        drag: {{ x: true, y: false, setScale: true }}
+      }},
+      hooks: {{
+        setScale: [onSetScale]
+      }}
+    }};
+  }}
+
+  function makeFeedbackOpts(width, height) {{
+    return {{
+      title: 'Feedback State (D, epsilon, I)',
+      width,
+      height,
+      scales: {{ x: {{ time: false }} }},
+      series: [
+        {{}},
+        {{ label: 'Deficit D (ETH)', stroke: '#dc2626', width: 1.2 }},
+        {{ label: 'Normalized deficit epsilon', stroke: '#0891b2', width: 1.0 }},
+        {{ label: 'Integral I', stroke: '#7c2d12', width: 1.0 }}
+      ],
+      axes: [
+        {{ label: 'L1 Block Number' }},
+        {{ label: 'Mixed units' }}
       ],
       cursor: {{
         drag: {{ x: true, y: false, setScale: true }}
@@ -545,6 +782,18 @@ def build_app_js(blocks, base, blob):
     reqWrap
   );
 
+  controllerPlot = new uPlot(
+    makeControllerOpts(width, 320),
+    [blocks, [], [], [], [], []],
+    controllerWrap
+  );
+
+  feedbackPlot = new uPlot(
+    makeFeedbackOpts(width, 320),
+    [blocks, [], [], []],
+    feedbackWrap
+  );
+
   vaultPlot = new uPlot(
     makeVaultOpts(width, 320),
     [blocks, [], []],
@@ -572,6 +821,11 @@ def build_app_js(blocks, base, blob):
 
   document.getElementById('recalcBtn').addEventListener('click', recalcDerivedSeries);
 
+  controllerModeInput.addEventListener('change', function () {{
+    applyControllerModePreset(controllerModeInput.value || 'alpha-only');
+    recalcDerivedSeries();
+  }});
+
   minInput.addEventListener('keydown', function (e) {{
     if (e.key === 'Enter') applyRange(minInput.value, maxInput.value, null);
   }});
@@ -592,6 +846,12 @@ def build_app_js(blocks, base, blob):
     autoAlphaInput,
     alphaGasInput,
     alphaBlobInput,
+    dffBlocksInput,
+    dfbBlocksInput,
+    kpInput,
+    kiInput,
+    iMinInput,
+    iMaxInput,
     minFeeGweiInput,
     maxFeeGweiInput,
     initialVaultEthInput,
@@ -744,9 +1004,23 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <label>L1 gas used <input id=\"l1GasUsed\" type=\"number\" min=\"0\" step=\"1000\" value=\"{DEFAULT_L1_GAS_USED}\" /></label>
             <label>Blobs <input id=\"numBlobs\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_NUM_BLOBS}\" /></label>
             <label>Priority fee (gwei) <input id=\"priorityFeeGwei\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_PRIORITY_FEE_GWEI:g}\" /></label>
+            <label>Controller mode
+              <select id=\"controllerMode\">
+                <option value=\"alpha-only\"{" selected" if DEFAULT_CONTROLLER_MODE == "alpha-only" else ""}>alpha-only</option>
+                <option value=\"p\"{" selected" if DEFAULT_CONTROLLER_MODE == "p" else ""}>p</option>
+                <option value=\"pi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi" else ""}>pi</option>
+                <option value=\"pi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi+ff" else ""}>pi+ff</option>
+              </select>
+            </label>
             <label><input id=\"autoAlpha\" type=\"checkbox\" checked /> Auto alpha</label>
             <label>Alpha gas <input id=\"alphaGas\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_GAS:.6f}\" /></label>
             <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
+            <label>Kp <input id=\"kp\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KP:g}\" /></label>
+            <label>Ki <input id=\"ki\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KI:g}\" /></label>
+            <label>I min <input id=\"iMin\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MIN:g}\" /></label>
+            <label>I max <input id=\"iMax\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MAX:g}\" /></label>
+            <label>Feedforward delay d_ff (L1 blocks) <input id=\"dffBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FF_BLOCKS}\" /></label>
+            <label>Feedback delay d_fb (L1 blocks) <input id=\"dfbBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FB_BLOCKS}\" /></label>
             <label>Min fee (gwei/L2 gas) <input id=\"minFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MIN_FEE_GWEI:g}\" /></label>
             <label>Max fee (gwei/L2 gas) <input id=\"maxFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MAX_FEE_GWEI:.1f}\" /></label>
             <label>Initial vault (ETH) <input id=\"initialVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_INITIAL_VAULT_ETH:g}\" /></label>
@@ -754,7 +1028,9 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <button class=\"primary\" id=\"recalcBtn\">Recompute derived charts</button>
           </div>
           <div class=\"formula\">cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</div>
-          <div class=\"formula\">fee_wei(t) = clamp(alpha_gas * (baseFee_t + priorityFee) + alpha_blob * blobBaseFee_t, minFee, maxFee)</div>
+          <div class=\"formula\">FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</div>
+          <div class=\"formula\">D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</div>
+          <div class=\"formula\">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee), minFee, maxFee)</div>
           <div class=\"formula\">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
           <div class=\"formula\">Assume L1 block time = 12s; derived <strong id=\"derivedL2GasPerL1Block\">-</strong> and <strong id=\"derivedL2GasPerProposal\">-</strong></div>
           <div class=\"formula\">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
@@ -766,6 +1042,12 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>Latest charged L2 fee: <strong id=\"latestChargedFee\">-</strong></span>
             <span>Latest gas component fee: <strong id=\"latestGasComponentFee\">-</strong></span>
             <span>Latest blob component fee: <strong id=\"latestBlobComponentFee\">-</strong></span>
+            <span>Latest deficit D: <strong id=\"latestDeficitEth\">-</strong></span>
+            <span>Latest epsilon: <strong id=\"latestEpsilon\">-</strong></span>
+            <span>Latest integral I: <strong id=\"latestIntegral\">-</strong></span>
+            <span>Latest FF term: <strong id=\"latestFfTerm\">-</strong></span>
+            <span>Latest FB term: <strong id=\"latestFbTerm\">-</strong></span>
+            <span>Latest clamp state: <strong id=\"latestClampState\">-</strong></span>
             <span>Latest L2 gas used: <strong id=\"latestL2GasUsed\">-</strong></span>
             <span>Latest vault value: <strong id=\"latestVaultValue\">-</strong></span>
             <span>Vault - target: <strong id=\"latestVaultGap\">-</strong></span>
@@ -781,6 +1063,8 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
         <div id=\"l2GasPlot\" class=\"plot\"></div>
         <div id=\"costPlot\" class=\"plot\"></div>
         <div id=\"requiredFeePlot\" class=\"plot\"></div>
+        <div id=\"controllerPlot\" class=\"plot\"></div>
+        <div id=\"feedbackPlot\" class=\"plot\"></div>
         <div id=\"vaultPlot\" class=\"plot\"></div>
       </main>
     </div>

@@ -43,6 +43,9 @@ def stale_err(arr, ks):
                 hold = v
             if v > 0:
                 errs.append(abs(hold - v) / v)
+        if not errs:
+            out[str(k)] = {"median": 0.0, "p90": 0.0, "mean": 0.0}
+            continue
         out[str(k)] = {
             "median": statistics.median(errs),
             "p90": pct(errs, 90),
@@ -89,6 +92,11 @@ def main():
     parser.add_argument("--blocks-per-day", type=int, default=7200, help="Assumed blocks/day")
     parser.add_argument("--chunk", type=int, default=1024, help="feeHistory blockCount per RPC call")
     parser.add_argument(
+        "--start-block",
+        default=None,
+        help="Optional starting block number for the window. Accepts decimal or 0x-prefixed hex.",
+    )
+    parser.add_argument(
         "--end-block",
         default=None,
         help="Optional ending block number for the window (default: current head). Accepts decimal or 0x-prefixed hex.",
@@ -99,23 +107,47 @@ def main():
     rpc = make_rpc(session, args.rpc)
 
     chain_head = int(rpc("eth_blockNumber", []), 16)
+
+    def parse_block_arg(raw, arg_name):
+        if raw is None:
+            return None
+        v = int(raw, 0)
+        if v < 0:
+            raise ValueError(f"{arg_name} must be non-negative")
+        return v
+
+    start_override = parse_block_arg(args.start_block, "--start-block")
+    end_override = parse_block_arg(args.end_block, "--end-block")
+
     if args.end_block is None:
         latest = chain_head
     else:
-        latest = int(args.end_block, 0)
-        if latest < 0:
-            raise ValueError("--end-block must be non-negative")
+        latest = end_override
         if latest > chain_head:
             raise ValueError(f"--end-block {latest} is above chain head {chain_head}")
 
+    if start_override is None:
+        start_block = max(0, latest - args.days * args.blocks_per_day)
+    else:
+        start_block = start_override
+
+    if start_block > latest:
+        raise ValueError(f"start block {start_block} is above end block {latest}")
+    if start_block > chain_head:
+        raise ValueError(f"--start-block {start_block} is above chain head {chain_head}")
+
     latest_blk = rpc("eth_getBlockByNumber", [hex(latest), False], rid=3)
     latest_ts = int(latest_blk["timestamp"], 16)
+    start_blk_info = rpc("eth_getBlockByNumber", [hex(start_block), False], rid=4)
+    start_ts = int(start_blk_info["timestamp"], 16)
 
-    start_block = max(0, latest - args.days * args.blocks_per_day)
     total_blocks = latest - start_block + 1
     expected_calls = (total_blocks + args.chunk - 1) // args.chunk
 
-    print(f"Collecting {total_blocks} blocks over {args.days} days, expected_calls={expected_calls}")
+    if start_override is None:
+        print(f"Collecting {total_blocks} blocks over ~{args.days} days, expected_calls={expected_calls}")
+    else:
+        print(f"Collecting explicit block range {start_block}..{latest} ({total_blocks} blocks), expected_calls={expected_calls}")
 
     rows = []
     current_newest = latest
@@ -172,6 +204,8 @@ def main():
         "window_end_block": latest,
         "window_end_timestamp_utc": datetime.fromtimestamp(latest_ts, tz=timezone.utc).isoformat(),
         "latest_block_timestamp_utc": datetime.fromtimestamp(latest_ts, tz=timezone.utc).isoformat(),
+        "window_start_block": start_block,
+        "window_start_timestamp_utc": datetime.fromtimestamp(start_ts, tz=timezone.utc).isoformat(),
         "assumed_start_timestamp_utc": datetime.fromtimestamp(
             latest_ts - (rows[-1]["block_number"] - rows[0]["block_number"]) * 12,
             tz=timezone.utc,
@@ -191,8 +225,8 @@ def main():
             "max": max(blob_g),
         },
         "log_return_stdev": {
-            "base": statistics.pstdev(base_lr),
-            "blob": statistics.pstdev(blob_lr),
+            "base": statistics.pstdev(base_lr) if base_lr else 0.0,
+            "blob": statistics.pstdev(blob_lr) if blob_lr else 0.0,
         },
         "blob_nonzero_ratio": sum(1 for x in blob if x > 0) / len(blob),
         "blob_gas_used_ratio": {
@@ -209,7 +243,10 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    base_name = f"eth_l1_fee_{args.days}d_{stamp}"
+    if start_override is not None or end_override is not None:
+        base_name = f"eth_l1_fee_blocks_{start_block}_{latest}_{stamp}"
+    else:
+        base_name = f"eth_l1_fee_{args.days}d_{stamp}"
     csv_path = os.path.join(out_dir, base_name + ".csv")
     json_path = os.path.join(out_dir, base_name + "_summary.json")
 
