@@ -710,6 +710,16 @@ def build_app_js(blocks, base, blob, time_anchor):
     }}
   }}
 
+  function scoreCurrentRangeNow() {{
+    const [minB, maxB] = clampRange(minInput.value, maxInput.value);
+    updateScorecard(
+      minB,
+      maxB,
+      parsePositive(maxFeeGweiInput, {DEFAULT_MAX_FEE_GWEI}),
+      parsePositive(targetVaultEthInput, {DEFAULT_TARGET_VAULT_ETH})
+    );
+  }}
+
   function ensureFeedforwardDefaults() {{
     const alphaGasNow = parsePositive(alphaGasInput, 0);
     const alphaBlobNow = parsePositive(alphaBlobInput, 0);
@@ -848,6 +858,8 @@ def build_app_js(blocks, base, blob, time_anchor):
   let sweepRunning = false;
   let sweepCancelRequested = false;
   let sweepBestCandidate = null;
+  let sweepResults = [];
+  let sweepCurrentPoint = null;
   let sweepRunSeq = 0;
   let sweepPoints = [];
 
@@ -871,11 +883,14 @@ def build_app_js(blocks, base, blob, time_anchor):
   function markSweepStale(reason) {{
     if (sweepRunning) return;
     sweepBestCandidate = null;
+    sweepResults = [];
+    sweepCurrentPoint = null;
     sweepPoints = [];
     if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
     const why = reason ? ` (${{reason}})` : '';
     setSweepStatus(`Sweep stale${{why}}. Run parameter sweep to refresh.`);
     setSweepHoverText('Hover point: -');
+    if (sweepPlot) sweepPlot.setData([[], [], [], []]);
   }}
 
   function getSweepRangeIndices() {{
@@ -1166,6 +1181,42 @@ def build_app_js(blocks, base, blob, time_anchor):
     latestClampState.textContent = derivedClampState[lastIdx];
     latestVaultValue.textContent = `${{formatNum(derivedVaultEth[lastIdx], 6)}} ETH`;
     latestVaultGap.textContent = `${{formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)}} ETH`;
+    if (sweepResults.length) {{
+      const sweepRange = getSweepRangeIndices();
+      if (sweepRange) {{
+        const sweepScoreCfg = parseScoringWeights();
+        const sweepSimCfg = {{
+          postEveryBlocks,
+          l1GasUsed,
+          numBlobs,
+          priorityFeeWei,
+          dffBlocks,
+          dfbBlocks,
+          derivBeta,
+          iMin,
+          iMax,
+          minFeeWei,
+          maxFeeWei,
+          maxFeeGwei,
+          feeRangeWei: maxFeeWei - minFeeWei,
+          initialVaultEth,
+          targetVaultEth,
+          alphaGas,
+          alphaBlob,
+          l2GasPerL1BlockSeries: derivedL2GasPerL1Block
+        }};
+        sweepCurrentPoint = evaluateSweepCandidate(
+          sweepRange.i0,
+          sweepRange.i1,
+          {{ mode: controllerMode, kp, ki, kd }},
+          sweepSimCfg,
+          sweepScoreCfg
+        );
+      }} else {{
+        sweepCurrentPoint = null;
+      }}
+      renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint);
+    }}
     markScoreStale('recomputed charts');
   }}
 
@@ -1188,7 +1239,6 @@ def build_app_js(blocks, base, blob, time_anchor):
     let feeSumSq = 0;
     let feeCount = 0;
     let clampMaxCount = 0;
-    let peak = vault;
     let maxDrawdownEth = 0;
     let underTargetCount = 0;
     let deficitAreaBand = 0;
@@ -1257,9 +1307,9 @@ def build_app_js(blocks, base, blob, time_anchor):
       }}
       vaultSeries[local] = vault;
 
-      if (vault > peak) peak = vault;
-      const drawdown = peak - vault;
-      if (drawdown > maxDrawdownEth) maxDrawdownEth = drawdown;
+      // Keep health metric consistent with score card: max under-target gap.
+      const gap = vault - simCfg.targetVaultEth;
+      if (-gap > maxDrawdownEth) maxDrawdownEth = -gap;
 
       if (vault < simCfg.targetVaultEth) {{
         underTargetCount += 1;
@@ -1329,7 +1379,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     }};
   }}
 
-  function renderSweepScatter(results, best) {{
+  function renderSweepScatter(results, best, currentPoint) {{
     if (!sweepPlot) return;
     const points = [];
     for (let i = 0; i < results.length; i++) {{
@@ -1349,7 +1399,25 @@ def build_app_js(blocks, base, blob, time_anchor):
         kp: r.kp,
         ki: r.ki,
         kd: r.kd,
-        isBest
+        isBest,
+        isCurrent: false
+      }});
+    }}
+    if (
+      currentPoint &&
+      Number.isFinite(currentPoint.uxBadness) &&
+      Number.isFinite(currentPoint.healthBadness)
+    ) {{
+      points.push({{
+        ux: currentPoint.uxBadness,
+        health: currentPoint.healthBadness,
+        total: currentPoint.totalBadness,
+        mode: currentPoint.mode,
+        kp: currentPoint.kp,
+        ki: currentPoint.ki,
+        kd: currentPoint.kd,
+        isBest: false,
+        isCurrent: true
       }});
     }}
     points.sort(function (a, b) {{
@@ -1360,6 +1428,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const x = new Array(points.length);
     const allY = new Array(points.length);
     const bestY = new Array(points.length);
+    const currentY = new Array(points.length);
 
     let xMin = Infinity;
     let xMax = -Infinity;
@@ -1372,6 +1441,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       x[i] = p.ux;
       allY[i] = p.health;
       bestY[i] = p.isBest ? p.health : null;
+      currentY[i] = p.isCurrent ? p.health : null;
       if (p.ux < xMin) xMin = p.ux;
       if (p.ux > xMax) xMax = p.ux;
       if (p.health < yMin) yMin = p.health;
@@ -1379,7 +1449,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     }}
 
     sweepPoints = points;
-    sweepPlot.setData([x, allY, bestY]);
+    sweepPlot.setData([x, allY, bestY, currentY]);
     if (points.length) {{
       const xSpan = Math.max(xMax - xMin, 1e-9);
       const ySpan = Math.max(yMax - yMin, 1e-9);
@@ -1404,9 +1474,12 @@ def build_app_js(blocks, base, blob, time_anchor):
       return;
     }}
     const rankPart = Number.isFinite(p.rank) ? `#${{p.rank}}` : '-';
-    const bestPart = p.isBest ? ' (best)' : '';
+    const tagParts = [];
+    if (p.isBest) tagParts.push('best');
+    if (p.isCurrent) tagParts.push('current');
+    const tagText = tagParts.length ? ` (${{tagParts.join(', ')}})` : '';
     setSweepHoverText(
-      `Hover point ${{rankPart}}${{bestPart}}: mode=${{p.mode}}, ` +
+      `Hover point ${{rankPart}}${{tagText}}: mode=${{p.mode}}, ` +
       `Kp=${{formatNum(p.kp, 4)}}, Ki=${{formatNum(p.ki, 4)}}, Kd=${{formatNum(p.kd, 4)}}, ` +
       `health=${{formatNum(p.health, 6)}}, UX=${{formatNum(p.ux, 6)}}, total=${{formatNum(p.total, 6)}}`
     );
@@ -1518,6 +1591,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     results.sort(function (a, b) {{
       return a.totalBadness - b.totalBadness;
     }});
+    sweepResults = results;
+    sweepCurrentPoint = null;
     sweepBestCandidate = results[0];
     if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = false;
     if (sweepBestMode) sweepBestMode.textContent = sweepBestCandidate.mode;
@@ -1527,7 +1602,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     if (sweepBestHealth) sweepBestHealth.textContent = formatNum(sweepBestCandidate.healthBadness, 6);
     if (sweepBestUx) sweepBestUx.textContent = formatNum(sweepBestCandidate.uxBadness, 6);
     if (sweepBestTotal) sweepBestTotal.textContent = formatNum(sweepBestCandidate.totalBadness, 6);
-    renderSweepScatter(results, sweepBestCandidate);
+    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint);
 
     if (sweepCancelRequested) {{
       setSweepStatus(
@@ -1549,7 +1624,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     kiInput.value = `${{sweepBestCandidate.ki}}`;
     kdInput.value = `${{sweepBestCandidate.kd}}`;
     recalcDerivedSeries();
-    markScoreStale('applied sweep best candidate');
+    scoreCurrentRangeNow();
   }}
 
   minInput.value = MIN_BLOCK;
@@ -1624,9 +1699,24 @@ def build_app_js(blocks, base, blob, time_anchor):
       scales: {{ x: {{ time: false }} }},
       series: [
         {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
-        {{ label: 'Gas cost (ETH)', stroke: '#2563eb', width: 1 }},
-        {{ label: 'Blob cost (ETH)', stroke: '#ea580c', width: 1 }},
-        {{ label: 'Total cost (ETH)', stroke: '#7c3aed', width: 1.4 }}
+        {{
+          label: 'Gas cost (ETH)',
+          stroke: '#2563eb',
+          width: 1,
+          value: function (u, v) {{ return formatNum(v, 9); }}
+        }},
+        {{
+          label: 'Blob cost (ETH)',
+          stroke: '#ea580c',
+          width: 1,
+          value: function (u, v) {{ return formatNum(v, 9); }}
+        }},
+        {{
+          label: 'Total cost (ETH)',
+          stroke: '#7c3aed',
+          width: 1.4,
+          value: function (u, v) {{ return formatNum(v, 9); }}
+        }}
       ],
       axes: [
         {{ label: 'L1 Block Number' }},
@@ -1773,6 +1863,12 @@ def build_app_js(blocks, base, blob, time_anchor):
           stroke: '#dc2626',
           width: 0,
           points: {{ show: true, size: 7, stroke: '#dc2626', fill: '#ef4444' }}
+        }},
+        {{
+          label: 'Current settings (last recompute)',
+          stroke: '#ca8a04',
+          width: 0,
+          points: {{ show: true, size: 7, stroke: '#ca8a04', fill: '#facc15' }}
         }}
       ],
       axes: [
@@ -1897,7 +1993,7 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   sweepPlot = new uPlot(
     makeSweepOpts(sweepSize, sweepSize),
-    [[], [], []],
+    [[], [], [], []],
     sweepWrap
   );
 
@@ -1929,13 +2025,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     scoreBtn.addEventListener('click', function () {{
       if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
       window.setTimeout(function () {{
-        const [minB, maxB] = clampRange(minInput.value, maxInput.value);
-        updateScorecard(
-          minB,
-          maxB,
-          parsePositive(maxFeeGweiInput, {DEFAULT_MAX_FEE_GWEI}),
-          parsePositive(targetVaultEthInput, {DEFAULT_TARGET_VAULT_ETH})
-        );
+        scoreCurrentRangeNow();
       }}, 0);
     }});
   }}
