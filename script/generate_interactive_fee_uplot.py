@@ -359,6 +359,9 @@ def build_app_js(blocks, base, blob, time_anchor):
   const totalFormulaLine = document.getElementById('totalFormulaLine');
   const scoreBtn = document.getElementById('scoreBtn');
   const scoreStatus = document.getElementById('scoreStatus');
+  const scoreHelpBtn = document.getElementById('scoreHelpBtn');
+  const scoreHelpModal = document.getElementById('scoreHelpModal');
+  const scoreHelpClose = document.getElementById('scoreHelpClose');
   const sweepBtn = document.getElementById('sweepBtn');
   const sweepCancelBtn = document.getElementById('sweepCancelBtn');
   const sweepApplyBestBtn = document.getElementById('sweepApplyBestBtn');
@@ -2040,6 +2043,38 @@ def build_app_js(blocks, base, blob, time_anchor):
     }});
   }}
 
+  function setScoreHelpOpen(isOpen) {{
+    if (!scoreHelpModal) return;
+    if (isOpen) {{
+      scoreHelpModal.classList.add('open');
+      scoreHelpModal.setAttribute('aria-hidden', 'false');
+    }} else {{
+      scoreHelpModal.classList.remove('open');
+      scoreHelpModal.setAttribute('aria-hidden', 'true');
+    }}
+  }}
+
+  if (scoreHelpBtn && scoreHelpModal) {{
+    scoreHelpBtn.addEventListener('click', function () {{
+      setScoreHelpOpen(true);
+    }});
+    if (scoreHelpClose) {{
+      scoreHelpClose.addEventListener('click', function () {{
+        setScoreHelpOpen(false);
+      }});
+    }}
+    scoreHelpModal.addEventListener('click', function (e) {{
+      if (e.target === scoreHelpModal) {{
+        setScoreHelpOpen(false);
+      }}
+    }});
+    document.addEventListener('keydown', function (e) {{
+      if (e.key === 'Escape' && scoreHelpModal.classList.contains('open')) {{
+        setScoreHelpOpen(false);
+      }}
+    }});
+  }}
+
   if (sweepBtn) {{
     sweepBtn.addEventListener('click', function () {{
       runParameterSweep();
@@ -2219,6 +2254,34 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
       background: #f8fafc;
     }}
     .assumptions-title {{ font-size: 13px; color: var(--muted); margin-bottom: 8px; }}
+    .title-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }}
+    .title-row .assumptions-title {{
+      margin-bottom: 0;
+      font-weight: 600;
+      color: #334155;
+    }}
+    .help-btn {{
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border-radius: 999px;
+      font-weight: 700;
+      color: #0f766e;
+      border-color: #94a3b8;
+      background: #ffffff;
+      line-height: 1;
+    }}
+    .help-btn:hover {{
+      border-color: #0f766e;
+      color: #0b5f58;
+      background: #ecfeff;
+    }}
     label {{ font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }}
     input[type=number], select {{ width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }}
     button {{ border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }}
@@ -2275,6 +2338,71 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
       color: #334155;
       margin: 8px 0 4px;
       font-weight: 600;
+    }}
+    .help-modal {{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(2, 6, 23, 0.55);
+      z-index: 1100;
+    }}
+    .help-modal.open {{
+      display: flex;
+    }}
+    .help-card {{
+      width: min(760px, calc(100vw - 36px));
+      max-height: min(84vh, 760px);
+      overflow: auto;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      box-shadow: 0 18px 40px rgba(2, 6, 23, 0.25);
+      padding: 14px;
+    }}
+    .help-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .help-title {{
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0;
+    }}
+    .help-close {{
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 999px;
+      font-size: 18px;
+      line-height: 1;
+    }}
+    .help-body p {{
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: #334155;
+      line-height: 1.45;
+    }}
+    .help-body ul {{
+      margin: 0 0 10px 18px;
+      padding: 0;
+      color: #334155;
+      font-size: 13px;
+      line-height: 1.4;
+    }}
+    .help-body code {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 1px 4px;
     }}
   </style>
 </head>
@@ -2382,7 +2510,10 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
         </div>
 
         <div class=\"assumptions score-card\">
-          <div class=\"assumptions-title\">Health / UX Scoring</div>
+          <div class=\"title-row\">
+            <div class=\"assumptions-title\">Health / UX Scoring</div>
+            <button id=\"scoreHelpBtn\" class=\"help-btn\" type=\"button\" title=\"Explain scoring\">?</button>
+          </div>
           <div class=\"controls\">
             <label>Deficit deadband (%) <input id=\"deficitDeadbandPct\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_DEFICIT_DEADBAND_PCT:g}\" /></label>
             <label>Overall health weight <input id=\"scoreWeightHealth\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_WEIGHT:g}\" /></label>
@@ -2469,6 +2600,35 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
         <div id=\"vaultPlot\" class=\"plot\"></div>
         <div id=\"sweepPlot\" class=\"plot\"></div>
       </main>
+    </div>
+  </div>
+
+  <div id=\"scoreHelpModal\" class=\"help-modal\" aria-hidden=\"true\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"scoreHelpTitle\">
+    <div class=\"help-card\">
+      <div class=\"help-head\">
+        <h2 id=\"scoreHelpTitle\" class=\"help-title\">How Scoring Works</h2>
+        <button id=\"scoreHelpClose\" class=\"help-close\" type=\"button\" title=\"Close\">x</button>
+      </div>
+      <div class=\"help-body\">
+        <p><strong>Goal:</strong> compare controller settings over the selected block range. Lower score is better.</p>
+        <p><code>total_badness = weighted_mean(health_badness, ux_badness)</code></p>
+        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dGap, dStreak)</code></p>
+        <ul>
+          <li><code>dDraw</code>: max under-target gap, normalized by target vault</li>
+          <li><code>dUnder</code>: fraction of blocks with vault below target</li>
+          <li><code>dArea</code>: deadbanded deficit area, normalized by target and range length</li>
+          <li><code>dGap</code>: absolute final vault-target gap, normalized by target</li>
+          <li><code>dStreak</code>: longest consecutive under-target run, normalized by range length</li>
+        </ul>
+        <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp)</code></p>
+        <ul>
+          <li><code>uStd</code>: fee standard deviation, normalized by max fee</li>
+          <li><code>uP95</code>/<code>uP99</code>: p95/p99 absolute fee step size, normalized by max fee</li>
+          <li><code>uMax</code>: max absolute fee step, normalized by max fee</li>
+          <li><code>uClamp</code>: fraction of blocks clamped at max fee</li>
+        </ul>
+        <p>Use the weight inputs to emphasize protocol health vs user UX, then click <strong>Score current range</strong>.</p>
+      </div>
     </div>
   </div>
 
