@@ -46,6 +46,10 @@ DEFAULT_UX_W_P95 = 0.30
 DEFAULT_UX_W_P99 = 0.20
 DEFAULT_UX_W_MAXSTEP = 0.10
 DEFAULT_UX_W_CLAMP = 0.10
+DEFAULT_SWEEP_KP_VALUES = [0.0, 0.02, 0.05, 0.10, 0.20, 0.40]
+DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.002, 0.005, 0.010]
+DEFAULT_SWEEP_KD_VALUES = [0.0, 0.010, 0.020, 0.050, 0.100]
+DEFAULT_SWEEP_MAX_BLOCKS = 120_000
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -265,6 +269,11 @@ def build_app_js(blocks, base, blob, time_anchor):
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
   const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
+  const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
+  const SWEEP_KP_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KP_VALUES)});
+  const SWEEP_KI_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KI_VALUES)});
+  const SWEEP_KD_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KD_VALUES)});
+  const SWEEP_MAX_BLOCKS = {DEFAULT_SWEEP_MAX_BLOCKS};
 
   const minInput = document.getElementById('minBlock');
   const maxInput = document.getElementById('maxBlock');
@@ -348,6 +357,21 @@ def build_app_js(blocks, base, blob, time_anchor):
   const totalFormulaLine = document.getElementById('totalFormulaLine');
   const scoreBtn = document.getElementById('scoreBtn');
   const scoreStatus = document.getElementById('scoreStatus');
+  const sweepBtn = document.getElementById('sweepBtn');
+  const sweepCancelBtn = document.getElementById('sweepCancelBtn');
+  const sweepApplyBestBtn = document.getElementById('sweepApplyBestBtn');
+  const sweepStatus = document.getElementById('sweepStatus');
+  const sweepSpinner = document.getElementById('sweepSpinner');
+  const sweepBestMode = document.getElementById('sweepBestMode');
+  const sweepBestKp = document.getElementById('sweepBestKp');
+  const sweepBestKi = document.getElementById('sweepBestKi');
+  const sweepBestKd = document.getElementById('sweepBestKd');
+  const sweepBestHealth = document.getElementById('sweepBestHealth');
+  const sweepBestUx = document.getElementById('sweepBestUx');
+  const sweepBestTotal = document.getElementById('sweepBestTotal');
+  const sweepCandidateCount = document.getElementById('sweepCandidateCount');
+  const sweepRangeCount = document.getElementById('sweepRangeCount');
+  const sweepHover = document.getElementById('sweepHover');
 
   const l2GasWrap = document.getElementById('l2GasPlot');
   const baseWrap = document.getElementById('basePlot');
@@ -357,6 +381,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const controllerWrap = document.getElementById('controllerPlot');
   const feedbackWrap = document.getElementById('feedbackPlot');
   const vaultWrap = document.getElementById('vaultPlot');
+  const sweepWrap = document.getElementById('sweepPlot');
 
   function setStatus(msg) {{
     status.textContent = msg || '';
@@ -518,6 +543,34 @@ def build_app_js(blocks, base, blob, time_anchor):
       sum += w * values[i];
     }}
     return sumW > 0 ? (sum / sumW) : 0;
+  }}
+
+  function getModeFlags(mode) {{
+    const usesFeedforward = (
+      mode === 'alpha-only' ||
+      mode === 'pi+ff' ||
+      mode === 'pdi+ff'
+    );
+    const usesP = (
+      mode === 'p' ||
+      mode === 'pi' ||
+      mode === 'pd' ||
+      mode === 'pdi' ||
+      mode === 'pi+ff' ||
+      mode === 'pdi+ff'
+    );
+    const usesI = (
+      mode === 'pi' ||
+      mode === 'pdi' ||
+      mode === 'pi+ff' ||
+      mode === 'pdi+ff'
+    );
+    const usesD = (
+      mode === 'pd' ||
+      mode === 'pdi' ||
+      mode === 'pdi+ff'
+    );
+    return {{ usesFeedforward, usesP, usesI, usesD }};
   }}
 
   function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {{
@@ -791,6 +844,84 @@ def build_app_js(blocks, base, blob, time_anchor):
   let derivedClampState = [];
   let derivedVaultEth = [];
   let derivedVaultTargetEth = [];
+  let sweepPlot;
+  let sweepRunning = false;
+  let sweepCancelRequested = false;
+  let sweepBestCandidate = null;
+  let sweepRunSeq = 0;
+  let sweepPoints = [];
+
+  function setSweepUiState(running) {{
+    sweepRunning = running;
+    if (sweepBtn) sweepBtn.disabled = running;
+    if (sweepCancelBtn) sweepCancelBtn.disabled = !running;
+    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = running || !sweepBestCandidate;
+    if (sweepSpinner) sweepSpinner.style.display = running ? 'inline-block' : 'none';
+  }}
+
+  function setSweepStatus(msg) {{
+    if (sweepStatus) sweepStatus.textContent = msg || '';
+  }}
+
+  function setSweepHoverText(msg) {{
+    if (!sweepHover) return;
+    sweepHover.textContent = msg || 'Hover point: -';
+  }}
+
+  function markSweepStale(reason) {{
+    if (sweepRunning) return;
+    sweepBestCandidate = null;
+    sweepPoints = [];
+    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
+    const why = reason ? ` (${{reason}})` : '';
+    setSweepStatus(`Sweep stale${{why}}. Run parameter sweep to refresh.`);
+    setSweepHoverText('Hover point: -');
+  }}
+
+  function getSweepRangeIndices() {{
+    const [minB, maxB] = clampRange(minInput.value, maxInput.value);
+    const i0 = lowerBound(blocks, minB);
+    const i1 = upperBound(blocks, maxB) - 1;
+    if (i0 >= blocks.length || i1 < i0) return null;
+    return {{ minB, maxB, i0, i1, n: i1 - i0 + 1 }};
+  }}
+
+  function parseScoringWeights() {{
+    return {{
+      deadbandPct: parseWeight(deficitDeadbandPctInput, {DEFAULT_DEFICIT_DEADBAND_PCT}),
+      wHealth: parseWeight(scoreWeightHealthInput, {DEFAULT_HEALTH_WEIGHT}),
+      wUx: parseWeight(scoreWeightUxInput, {DEFAULT_UX_WEIGHT}),
+      wDraw: parseWeight(healthWDrawInput, {DEFAULT_HEALTH_W_DRAW}),
+      wUnder: parseWeight(healthWUnderInput, {DEFAULT_HEALTH_W_UNDER}),
+      wArea: parseWeight(healthWAreaInput, {DEFAULT_HEALTH_W_AREA}),
+      wGap: parseWeight(healthWGapInput, {DEFAULT_HEALTH_W_GAP}),
+      wStreak: parseWeight(healthWStreakInput, {DEFAULT_HEALTH_W_STREAK}),
+      wStd: parseWeight(uxWStdInput, {DEFAULT_UX_W_STD}),
+      wP95: parseWeight(uxWP95Input, {DEFAULT_UX_W_P95}),
+      wP99: parseWeight(uxWP99Input, {DEFAULT_UX_W_P99}),
+      wMaxStep: parseWeight(uxWMaxStepInput, {DEFAULT_UX_W_MAXSTEP}),
+      wClamp: parseWeight(uxWClampInput, {DEFAULT_UX_W_CLAMP})
+    }};
+  }}
+
+  function buildSweepCandidates() {{
+    const out = [];
+    for (const mode of SWEEP_MODES) {{
+      for (const kp of SWEEP_KP_VALUES) {{
+        for (const ki of SWEEP_KI_VALUES) {{
+          for (const kd of SWEEP_KD_VALUES) {{
+            out.push({{
+              mode,
+              kp,
+              ki,
+              kd
+            }});
+          }}
+        }}
+      }}
+    }}
+    return out;
+  }}
 
   function recalcDerivedSeries() {{
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
@@ -839,30 +970,11 @@ def build_app_js(blocks, base, blob, time_anchor):
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
     const feeRangeWei = maxFeeWei - minFeeWei;
-    const modeUsesFeedforward = (
-      controllerMode === 'alpha-only' ||
-      controllerMode === 'pi+ff' ||
-      controllerMode === 'pdi+ff'
-    );
-    const modeUsesP = (
-      controllerMode === 'p' ||
-      controllerMode === 'pi' ||
-      controllerMode === 'pd' ||
-      controllerMode === 'pdi' ||
-      controllerMode === 'pi+ff' ||
-      controllerMode === 'pdi+ff'
-    );
-    const modeUsesI = (
-      controllerMode === 'pi' ||
-      controllerMode === 'pdi' ||
-      controllerMode === 'pi+ff' ||
-      controllerMode === 'pdi+ff'
-    );
-    const modeUsesD = (
-      controllerMode === 'pd' ||
-      controllerMode === 'pdi' ||
-      controllerMode === 'pdi+ff'
-    );
+    const modeFlags = getModeFlags(controllerMode);
+    const modeUsesFeedforward = modeFlags.usesFeedforward;
+    const modeUsesP = modeFlags.usesP;
+    const modeUsesI = modeFlags.usesI;
+    const modeUsesD = modeFlags.usesD;
 
     derivedL2GasPerL1BlockText.textContent =
       `${{formatNum(l2GasPerL1BlockBase, 0)}} gas/L1 block (base), ` +
@@ -1055,6 +1167,389 @@ def build_app_js(blocks, base, blob, time_anchor):
     latestVaultValue.textContent = `${{formatNum(derivedVaultEth[lastIdx], 6)}} ETH`;
     latestVaultGap.textContent = `${{formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)}} ETH`;
     markScoreStale('recomputed charts');
+  }}
+
+  function evaluateSweepCandidate(i0, i1, candidate, simCfg, scoreCfg) {{
+    const modeFlags = getModeFlags(candidate.mode);
+    const n = i1 - i0 + 1;
+    const targetDenom = simCfg.targetVaultEth > 0 ? simCfg.targetVaultEth : 1;
+    const feeDenom = simCfg.maxFeeGwei > 0 ? simCfg.maxFeeGwei : 1;
+    const deadbandFloor = simCfg.targetVaultEth * (1 - scoreCfg.deadbandPct / 100);
+
+    const vaultSeries = new Array(n);
+    const feeSteps = [];
+    let vault = simCfg.initialVaultEth;
+    let pendingRevenueEth = 0;
+    let integralState = 0;
+    let epsilonPrev = 0;
+    let derivFiltered = 0;
+    let feePrev = null;
+    let feeSum = 0;
+    let feeSumSq = 0;
+    let feeCount = 0;
+    let clampMaxCount = 0;
+    let peak = vault;
+    let maxDrawdownEth = 0;
+    let underTargetCount = 0;
+    let deficitAreaBand = 0;
+    let worstStreak = 0;
+    let currentStreak = 0;
+
+    for (let local = 0; local < n; local++) {{
+      const i = i0 + local;
+      const baseFeeWei = baseFeeGwei[i] * 1e9;
+      const blobBaseFeeWei = blobFeeGwei[i] * 1e9;
+      const ffIndex = Math.max(0, i - simCfg.dffBlocks);
+      const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
+      const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
+
+      const gasCostWei = simCfg.l1GasUsed * (baseFeeWei + simCfg.priorityFeeWei);
+      const blobCostWei = simCfg.numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
+      const totalCostWei = gasCostWei + blobCostWei;
+
+      const fbLocal = local - simCfg.dfbBlocks;
+      const observedVault = fbLocal >= 0 ? vaultSeries[fbLocal] : simCfg.initialVaultEth;
+      const deficitEth = simCfg.targetVaultEth - observedVault;
+      const epsilon = targetDenom > 0 ? (deficitEth / targetDenom) : 0;
+      if (modeFlags.usesI) {{
+        integralState = clampNum(integralState + epsilon, simCfg.iMin, simCfg.iMax);
+      }} else {{
+        integralState = 0;
+      }}
+      const deRaw = local > 0 ? (epsilon - epsilonPrev) : 0;
+      derivFiltered =
+        simCfg.derivBeta * derivFiltered + (1 - simCfg.derivBeta) * deRaw;
+
+      const feedforwardWei = modeFlags.usesFeedforward
+        ? (
+            simCfg.alphaGas * (baseFeeFfWei + simCfg.priorityFeeWei) +
+            simCfg.alphaBlob * blobBaseFeeFfWei
+          )
+        : 0;
+      const pTermWei = modeFlags.usesP ? (candidate.kp * epsilon * simCfg.feeRangeWei) : 0;
+      const iTermWei = modeFlags.usesI ? (candidate.ki * integralState * simCfg.feeRangeWei) : 0;
+      const dTermWei = modeFlags.usesD ? (candidate.kd * derivFiltered * simCfg.feeRangeWei) : 0;
+      const feedbackWei = pTermWei + iTermWei + dTermWei;
+      const chargedFeeWeiPerL2Gas = clampNum(
+        feedforwardWei + feedbackWei,
+        simCfg.minFeeWei,
+        simCfg.maxFeeWei
+      );
+
+      if (chargedFeeWeiPerL2Gas >= simCfg.maxFeeWei - 1e-9) clampMaxCount += 1;
+
+      const chargedFeeGwei = chargedFeeWeiPerL2Gas / 1e9;
+      feeSum += chargedFeeGwei;
+      feeSumSq += chargedFeeGwei * chargedFeeGwei;
+      feeCount += 1;
+      if (feePrev != null) feeSteps.push(Math.abs(chargedFeeGwei - feePrev));
+      feePrev = chargedFeeGwei;
+
+      const l2RevenueEthPerBlock =
+        (chargedFeeWeiPerL2Gas * simCfg.l2GasPerL1BlockSeries[i]) / 1e18;
+      pendingRevenueEth += l2RevenueEthPerBlock;
+
+      const posted = ((i + 1) % simCfg.postEveryBlocks) === 0;
+      if (posted) {{
+        vault += pendingRevenueEth;
+        pendingRevenueEth = 0;
+        vault -= totalCostWei / 1e18;
+      }}
+      vaultSeries[local] = vault;
+
+      if (vault > peak) peak = vault;
+      const drawdown = peak - vault;
+      if (drawdown > maxDrawdownEth) maxDrawdownEth = drawdown;
+
+      if (vault < simCfg.targetVaultEth) {{
+        underTargetCount += 1;
+        currentStreak += 1;
+        if (currentStreak > worstStreak) worstStreak = currentStreak;
+      }} else {{
+        currentStreak = 0;
+      }}
+
+      if (vault < deadbandFloor) deficitAreaBand += (deadbandFloor - vault);
+      epsilonPrev = epsilon;
+    }}
+
+    const lastVault = vaultSeries[n - 1];
+    const underTargetRatio = n > 0 ? (underTargetCount / n) : 0;
+    const absFinalGapEth = Math.abs(lastVault - simCfg.targetVaultEth);
+    const meanFee = feeCount > 0 ? (feeSum / feeCount) : 0;
+    const variance = feeCount > 0 ? Math.max(0, (feeSumSq / feeCount) - meanFee * meanFee) : 0;
+    const feeStd = Math.sqrt(variance);
+    const stepP95 = percentile(feeSteps, 95);
+    const stepP99 = percentile(feeSteps, 99);
+    const maxStep = feeSteps.length ? Math.max.apply(null, feeSteps) : 0;
+    const clampMaxRatio = n > 0 ? (clampMaxCount / n) : 0;
+
+    const dDraw = maxDrawdownEth / targetDenom;
+    const dUnder = underTargetRatio;
+    const dArea = deficitAreaBand / (targetDenom * n);
+    const dGap = absFinalGapEth / targetDenom;
+    const dStreak = n > 0 ? (worstStreak / n) : 0;
+    const healthBadness = normalizedWeightedSum(
+      [dDraw, dUnder, dArea, dGap, dStreak],
+      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wGap, scoreCfg.wStreak]
+    );
+
+    const uStd = feeStd / feeDenom;
+    const uP95 = stepP95 / feeDenom;
+    const uP99 = stepP99 / feeDenom;
+    const uMax = maxStep / feeDenom;
+    const uClamp = clampMaxRatio;
+    const uxBadness = normalizedWeightedSum(
+      [uStd, uP95, uP99, uMax, uClamp],
+      [scoreCfg.wStd, scoreCfg.wP95, scoreCfg.wP99, scoreCfg.wMaxStep, scoreCfg.wClamp]
+    );
+
+    const totalBadness = normalizedWeightedSum(
+      [healthBadness, uxBadness],
+      [scoreCfg.wHealth, scoreCfg.wUx]
+    );
+
+    return {{
+      mode: candidate.mode,
+      kp: candidate.kp,
+      ki: candidate.ki,
+      kd: candidate.kd,
+      nBlocks: n,
+      healthBadness,
+      uxBadness,
+      totalBadness,
+      maxDrawdownEth,
+      underTargetRatio,
+      absFinalGapEth,
+      feeStd,
+      stepP95,
+      stepP99,
+      maxStep,
+      clampMaxRatio
+    }};
+  }}
+
+  function renderSweepScatter(results, best) {{
+    if (!sweepPlot) return;
+    const points = [];
+    for (let i = 0; i < results.length; i++) {{
+      const r = results[i];
+      const isBest = Boolean(
+        best &&
+        r.mode === best.mode &&
+        r.kp === best.kp &&
+        r.ki === best.ki &&
+        r.kd === best.kd
+      );
+      points.push({{
+        ux: r.uxBadness,
+        health: r.healthBadness,
+        total: r.totalBadness,
+        mode: r.mode,
+        kp: r.kp,
+        ki: r.ki,
+        kd: r.kd,
+        isBest
+      }});
+    }}
+    points.sort(function (a, b) {{
+      if (a.ux !== b.ux) return a.ux - b.ux;
+      return a.health - b.health;
+    }});
+
+    const x = new Array(points.length);
+    const allY = new Array(points.length);
+    const bestY = new Array(points.length);
+
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let yMin = Infinity;
+    let yMax = -Infinity;
+
+    for (let i = 0; i < points.length; i++) {{
+      const p = points[i];
+      p.rank = i + 1;
+      x[i] = p.ux;
+      allY[i] = p.health;
+      bestY[i] = p.isBest ? p.health : null;
+      if (p.ux < xMin) xMin = p.ux;
+      if (p.ux > xMax) xMax = p.ux;
+      if (p.health < yMin) yMin = p.health;
+      if (p.health > yMax) yMax = p.health;
+    }}
+
+    sweepPoints = points;
+    sweepPlot.setData([x, allY, bestY]);
+    if (points.length) {{
+      const xSpan = Math.max(xMax - xMin, 1e-9);
+      const ySpan = Math.max(yMax - yMin, 1e-9);
+      const xPad = xSpan * 0.08;
+      const yPad = ySpan * 0.08;
+      sweepPlot.batch(function () {{
+        sweepPlot.setScale('x', {{ min: xMin - xPad, max: xMax + xPad }});
+        sweepPlot.setScale('y', {{ min: yMin - yPad, max: yMax + yPad }});
+      }});
+    }}
+  }}
+
+  function onSetSweepCursor(u) {{
+    const idx = u && u.cursor ? u.cursor.idx : null;
+    if (idx == null || idx < 0 || idx >= sweepPoints.length) {{
+      setSweepHoverText('Hover point: -');
+      return;
+    }}
+    const p = sweepPoints[idx];
+    if (!p) {{
+      setSweepHoverText('Hover point: -');
+      return;
+    }}
+    const rankPart = Number.isFinite(p.rank) ? `#${{p.rank}}` : '-';
+    const bestPart = p.isBest ? ' (best)' : '';
+    setSweepHoverText(
+      `Hover point ${{rankPart}}${{bestPart}}: mode=${{p.mode}}, ` +
+      `Kp=${{formatNum(p.kp, 4)}}, Ki=${{formatNum(p.ki, 4)}}, Kd=${{formatNum(p.kd, 4)}}, ` +
+      `health=${{formatNum(p.health, 6)}}, UX=${{formatNum(p.ux, 6)}}, total=${{formatNum(p.total, 6)}}`
+    );
+  }}
+
+  async function runParameterSweep() {{
+    if (sweepRunning) return;
+    recalcDerivedSeries();
+
+    const range = getSweepRangeIndices();
+    if (!range) {{
+      setSweepStatus('Sweep failed: invalid selected range.');
+      return;
+    }}
+    if (range.n > SWEEP_MAX_BLOCKS) {{
+      setSweepStatus(
+        `Sweep range too large (${{range.n.toLocaleString()}} blocks). ` +
+        `Please zoom to <= ${{SWEEP_MAX_BLOCKS.toLocaleString()}} blocks.`
+      );
+      return;
+    }}
+
+    const candidates = buildSweepCandidates();
+    if (!candidates.length) {{
+      setSweepStatus('No sweep candidates configured.');
+      return;
+    }}
+
+    const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
+    const l1GasUsed = parsePositive(l1GasUsedInput, 0);
+    const numBlobs = parsePositive(numBlobsInput, 0);
+    const priorityFeeWei = parsePositive(priorityFeeGweiInput, 0) * 1e9;
+    const dffBlocks = parseNonNegativeInt(dffBlocksInput, {DEFAULT_D_FF_BLOCKS});
+    const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
+    const derivBeta = clampNum(parseNumber(dSmoothBetaInput, {DEFAULT_DERIV_BETA}), 0, 1);
+    const iMinRaw = parseNumber(iMinInput, -5);
+    const iMaxRaw = parseNumber(iMaxInput, 5);
+    const iMin = Math.min(iMinRaw, iMaxRaw);
+    const iMax = Math.max(iMinRaw, iMaxRaw);
+    const minFeeWei = parsePositive(minFeeGweiInput, 0) * 1e9;
+    const maxFeeGwei = parsePositive(maxFeeGweiInput, {DEFAULT_MAX_FEE_GWEI});
+    const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
+    const initialVaultEth = parsePositive(initialVaultEthInput, 0);
+    const targetVaultEth = parsePositive(targetVaultEthInput, 0);
+    const alphaGasFixed = parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS);
+    const alphaBlobFixed = parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB);
+    const scoreCfg = parseScoringWeights();
+    const simCfg = {{
+      postEveryBlocks,
+      l1GasUsed,
+      numBlobs,
+      priorityFeeWei,
+      dffBlocks,
+      dfbBlocks,
+      derivBeta,
+      iMin,
+      iMax,
+      minFeeWei,
+      maxFeeWei,
+      maxFeeGwei,
+      feeRangeWei: maxFeeWei - minFeeWei,
+      initialVaultEth,
+      targetVaultEth,
+      alphaGas: alphaGasFixed,
+      alphaBlob: alphaBlobFixed,
+      l2GasPerL1BlockSeries: derivedL2GasPerL1Block
+    }};
+
+    sweepCancelRequested = false;
+    const runId = ++sweepRunSeq;
+    setSweepUiState(true);
+    if (sweepCandidateCount) sweepCandidateCount.textContent = `${{candidates.length}} candidates`;
+    if (sweepRangeCount) sweepRangeCount.textContent = `${{range.n.toLocaleString()}} blocks`;
+    setSweepStatus(
+      `Running sweep on blocks ${{range.minB.toLocaleString()}}-${{range.maxB.toLocaleString()}}...`
+    );
+
+    const started = performance.now();
+    let lastYield = started;
+    const results = [];
+    setSweepHoverText('Hover point: -');
+    for (let idx = 0; idx < candidates.length; idx++) {{
+      if (sweepCancelRequested || runId !== sweepRunSeq) break;
+      const result = evaluateSweepCandidate(range.i0, range.i1, candidates[idx], simCfg, scoreCfg);
+      results.push(result);
+
+      if ((idx + 1) % 5 === 0 || idx + 1 === candidates.length) {{
+        setSweepStatus(
+          `Sweep progress: ${{(idx + 1).toLocaleString()}} / ${{candidates.length.toLocaleString()}} candidates`
+        );
+        const now = performance.now();
+        if (now - lastYield > 24) {{
+          await new Promise(function (resolve) {{ setTimeout(resolve, 0); }});
+          lastYield = performance.now();
+        }}
+      }}
+    }}
+
+    if (runId !== sweepRunSeq) return;
+
+    const elapsedSec = (performance.now() - started) / 1000;
+    if (!results.length) {{
+      setSweepStatus('Sweep did not produce results.');
+      setSweepHoverText('Hover point: -');
+      setSweepUiState(false);
+      return;
+    }}
+
+    results.sort(function (a, b) {{
+      return a.totalBadness - b.totalBadness;
+    }});
+    sweepBestCandidate = results[0];
+    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = false;
+    if (sweepBestMode) sweepBestMode.textContent = sweepBestCandidate.mode;
+    if (sweepBestKp) sweepBestKp.textContent = formatNum(sweepBestCandidate.kp, 4);
+    if (sweepBestKi) sweepBestKi.textContent = formatNum(sweepBestCandidate.ki, 4);
+    if (sweepBestKd) sweepBestKd.textContent = formatNum(sweepBestCandidate.kd, 4);
+    if (sweepBestHealth) sweepBestHealth.textContent = formatNum(sweepBestCandidate.healthBadness, 6);
+    if (sweepBestUx) sweepBestUx.textContent = formatNum(sweepBestCandidate.uxBadness, 6);
+    if (sweepBestTotal) sweepBestTotal.textContent = formatNum(sweepBestCandidate.totalBadness, 6);
+    renderSweepScatter(results, sweepBestCandidate);
+
+    if (sweepCancelRequested) {{
+      setSweepStatus(
+        `Sweep canceled after ${{results.length.toLocaleString()}} candidates in ${{formatNum(elapsedSec, 2)}}s.`
+      );
+    }} else {{
+      setSweepStatus(
+        `Sweep complete: ${{results.length.toLocaleString()}} candidates in ${{formatNum(elapsedSec, 2)}}s.`
+      );
+    }}
+    setSweepUiState(false);
+  }}
+
+  function applySweepBestCandidate() {{
+    if (!sweepBestCandidate) return;
+    controllerModeInput.value = sweepBestCandidate.mode;
+    applyControllerModePreset(sweepBestCandidate.mode);
+    kpInput.value = `${{sweepBestCandidate.kp}}`;
+    kiInput.value = `${{sweepBestCandidate.ki}}`;
+    kdInput.value = `${{sweepBestCandidate.kd}}`;
+    recalcDerivedSeries();
+    markScoreStale('applied sweep best candidate');
   }}
 
   minInput.value = MIN_BLOCK;
@@ -1254,6 +1749,55 @@ def build_app_js(blocks, base, blob, time_anchor):
     }};
   }}
 
+  function makeSweepOpts(width, height) {{
+    return {{
+      title: 'Sweep Tradeoff: Health vs UX (lower is better)',
+      width,
+      height,
+      scales: {{ x: {{}}, y: {{}} }},
+      series: [
+        {{
+          value: function (u, v) {{
+            if (!Number.isFinite(v)) return '';
+            return formatNum(v, 6);
+          }}
+        }},
+        {{
+          label: 'Candidates (pdi/pdi+ff)',
+          stroke: '#64748b',
+          width: 0,
+          points: {{ show: true, size: 4, stroke: '#64748b', fill: '#94a3b8' }}
+        }},
+        {{
+          label: 'Best weighted score',
+          stroke: '#dc2626',
+          width: 0,
+          points: {{ show: true, size: 7, stroke: '#dc2626', fill: '#ef4444' }}
+        }}
+      ],
+      axes: [
+        {{
+          label: 'UX badness',
+          values: function (u, vals) {{
+            return vals.map(function (v) {{ return formatNum(v, 4); }});
+          }}
+        }},
+        {{
+          label: 'Health badness',
+          values: function (u, vals) {{
+            return vals.map(function (v) {{ return formatNum(v, 4); }});
+          }}
+        }}
+      ],
+      cursor: {{
+        drag: {{ x: true, y: true, setScale: true }}
+      }},
+      hooks: {{
+        setCursor: [onSetSweepCursor]
+      }}
+    }};
+  }}
+
   function applyRange(minVal, maxVal, sourcePlot) {{
     const [minB, maxB] = clampRange(minVal, maxVal);
     minInput.value = minB;
@@ -1273,9 +1817,14 @@ def build_app_js(blocks, base, blob, time_anchor):
     for (const p of allPlots()) {{
       p.setSize({{ width, height: 320 }});
     }}
+    if (sweepPlot) {{
+      const sweepSize = Math.min(width, 560);
+      sweepPlot.setSize({{ width: sweepSize, height: sweepSize }});
+    }}
   }}
 
   const width = Math.max(480, baseWrap.clientWidth - 8);
+  const sweepSize = Math.min(width, 560);
 
   basePlot = new uPlot(
     makeOpts('L1 Base Fee', 'gwei', '#1d4ed8', width, 320),
@@ -1346,7 +1895,16 @@ def build_app_js(blocks, base, blob, time_anchor):
     vaultWrap
   );
 
+  sweepPlot = new uPlot(
+    makeSweepOpts(sweepSize, sweepSize),
+    [[], [], []],
+    sweepWrap
+  );
+
   recalcDerivedSeries();
+  setSweepUiState(false);
+  setSweepStatus('Sweep idle. Uses fixed alpha and sweeps only Kp/Ki/Kd across pdi + pdi+ff.');
+  setSweepHoverText('Hover point: -');
   updateRangeText(MIN_BLOCK, MAX_BLOCK);
 
   document.getElementById('applyBtn').addEventListener('click', function () {{
@@ -1379,6 +1937,26 @@ def build_app_js(blocks, base, blob, time_anchor):
           parsePositive(targetVaultEthInput, {DEFAULT_TARGET_VAULT_ETH})
         );
       }}, 0);
+    }});
+  }}
+
+  if (sweepBtn) {{
+    sweepBtn.addEventListener('click', function () {{
+      runParameterSweep();
+    }});
+  }}
+
+  if (sweepCancelBtn) {{
+    sweepCancelBtn.addEventListener('click', function () {{
+      if (!sweepRunning) return;
+      sweepCancelRequested = true;
+      setSweepStatus('Cancel requested. Finishing current candidate...');
+    }});
+  }}
+
+  if (sweepApplyBestBtn) {{
+    sweepApplyBestBtn.addEventListener('click', function () {{
+      applySweepBestCandidate();
     }});
   }}
 
@@ -1571,6 +2149,26 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
       color: #475569;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }}
+    .sweep-status-line {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+    }}
+    .spinner {{
+      width: 12px;
+      height: 12px;
+      border: 2px solid #cbd5e1;
+      border-top-color: #0f766e;
+      border-radius: 50%;
+      display: none;
+      animation: spin 0.9s linear infinite;
+      flex: 0 0 12px;
+    }}
+    @keyframes spin {{
+      from {{ transform: rotate(0deg); }}
+      to {{ transform: rotate(360deg); }}
+    }}
     .score-subtitle {{
       font-size: 12px;
       color: #334155;
@@ -1730,6 +2328,29 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>UX fee step p99: <strong id=\"uxFeeStepP99\">-</strong></span>
             <span>UX fee step max: <strong id=\"uxFeeStepMax\">-</strong></span>
           </div>
+          <div class=\"assumptions-title\">Parameter Sweep (fixed alpha)</div>
+          <div class=\"formula\">Sweep modes are fixed to pdi + pdi+ff; swept params are Kp, Ki, Kd only.</div>
+          <div class=\"controls\">
+            <button class=\"primary\" id=\"sweepBtn\">Run parameter sweep</button>
+            <button id=\"sweepCancelBtn\" disabled>Cancel sweep</button>
+            <button id=\"sweepApplyBestBtn\" disabled>Apply best params</button>
+          </div>
+          <div class=\"sweep-status-line\">
+            <span class=\"spinner\" id=\"sweepSpinner\"></span>
+            <div class=\"score-status\" id=\"sweepStatus\">Sweep idle.</div>
+          </div>
+          <div class=\"metrics\">
+            <span>Sweep size: <strong id=\"sweepCandidateCount\">-</strong></span>
+            <span>Range size: <strong id=\"sweepRangeCount\">-</strong></span>
+            <span>Best mode: <strong id=\"sweepBestMode\">-</strong></span>
+            <span>Best Kp: <strong id=\"sweepBestKp\">-</strong></span>
+            <span>Best Ki: <strong id=\"sweepBestKi\">-</strong></span>
+            <span>Best Kd: <strong id=\"sweepBestKd\">-</strong></span>
+            <span>Best health badness: <strong id=\"sweepBestHealth\">-</strong></span>
+            <span>Best UX badness: <strong id=\"sweepBestUx\">-</strong></span>
+            <span>Best total badness: <strong id=\"sweepBestTotal\">-</strong></span>
+          </div>
+          <div class=\"formula\" id=\"sweepHover\">Hover point: -</div>
         </div>
 
         <div class=\"status\" id=\"status\"></div>
@@ -1744,6 +2365,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
         <div id=\"controllerPlot\" class=\"plot\"></div>
         <div id=\"feedbackPlot\" class=\"plot\"></div>
         <div id=\"vaultPlot\" class=\"plot\"></div>
+        <div id=\"sweepPlot\" class=\"plot\"></div>
       </main>
     </div>
   </div>

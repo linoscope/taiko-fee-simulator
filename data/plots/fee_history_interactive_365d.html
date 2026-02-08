@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ethereum L1 Fee History (Recent 365 Days)</title>
+  <title>Ethereum + L2 Posting Cost Explorer</title>
   <link rel="stylesheet" href="./uPlot.min.css" />
   <style>
     :root {
@@ -86,6 +86,26 @@
       color: #475569;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
+    .sweep-status-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+    }
+    .spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid #cbd5e1;
+      border-top-color: #0f766e;
+      border-radius: 50%;
+      display: none;
+      animation: spin 0.9s linear infinite;
+      flex: 0 0 12px;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
     .score-subtitle {
       font-size: 12px;
       color: #334155;
@@ -96,7 +116,7 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Ethereum L1 Fee History (Recent 365 Days)</h1>
+    <h1>Ethereum + L2 Posting Cost Explorer</h1>
     <p class="sub">Drag horizontally inside any chart to zoom. Block range controls and zoom are synchronized across all charts.</p>
 
     <div class="layout">
@@ -255,6 +275,29 @@
             <span>UX fee step p99: <strong id="uxFeeStepP99">-</strong></span>
             <span>UX fee step max: <strong id="uxFeeStepMax">-</strong></span>
           </div>
+          <div class="assumptions-title">Parameter Sweep (fixed alpha)</div>
+          <div class="formula">Sweep modes are fixed to pdi + pdi+ff; swept params are Kp, Ki, Kd only.</div>
+          <div class="controls">
+            <button class="primary" id="sweepBtn">Run parameter sweep</button>
+            <button id="sweepCancelBtn" disabled>Cancel sweep</button>
+            <button id="sweepApplyBestBtn" disabled>Apply best params</button>
+          </div>
+          <div class="sweep-status-line">
+            <span class="spinner" id="sweepSpinner"></span>
+            <div class="score-status" id="sweepStatus">Sweep idle.</div>
+          </div>
+          <div class="metrics">
+            <span>Sweep size: <strong id="sweepCandidateCount">-</strong></span>
+            <span>Range size: <strong id="sweepRangeCount">-</strong></span>
+            <span>Best mode: <strong id="sweepBestMode">-</strong></span>
+            <span>Best Kp: <strong id="sweepBestKp">-</strong></span>
+            <span>Best Ki: <strong id="sweepBestKi">-</strong></span>
+            <span>Best Kd: <strong id="sweepBestKd">-</strong></span>
+            <span>Best health badness: <strong id="sweepBestHealth">-</strong></span>
+            <span>Best UX badness: <strong id="sweepBestUx">-</strong></span>
+            <span>Best total badness: <strong id="sweepBestTotal">-</strong></span>
+          </div>
+          <div class="formula" id="sweepHover">Hover point: -</div>
         </div>
 
         <div class="status" id="status"></div>
@@ -269,6 +312,7 @@
         <div id="controllerPlot" class="plot"></div>
         <div id="feedbackPlot" class="plot"></div>
         <div id="vaultPlot" class="plot"></div>
+        <div id="sweepPlot" class="plot"></div>
       </main>
     </div>
   </div>
