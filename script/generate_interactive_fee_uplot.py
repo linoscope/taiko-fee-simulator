@@ -27,6 +27,7 @@ DEFAULT_D_FB_BLOCKS = 5
 DEFAULT_KP = 0.1
 DEFAULT_KI = 0.0
 DEFAULT_KD = 0.0
+DEFAULT_P_TERM_MIN_GWEI = -1.0
 DEFAULT_DERIV_BETA = 0.8
 DEFAULT_I_MIN = -5.0
 DEFAULT_I_MAX = 5.0
@@ -298,6 +299,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const dfbBlocksInput = document.getElementById('dfbBlocks');
   const dSmoothBetaInput = document.getElementById('dSmoothBeta');
   const kpInput = document.getElementById('kp');
+  const pMinGweiInput = document.getElementById('pMinGwei');
   const kiInput = document.getElementById('ki');
   const kdInput = document.getElementById('kd');
   const iMinInput = document.getElementById('iMin');
@@ -956,6 +958,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
     const derivBeta = clampNum(parseNumber(dSmoothBetaInput, {DEFAULT_DERIV_BETA}), 0, 1);
     const kp = parsePositive(kpInput, 0);
+    const pTermMinGwei = parseNumber(pMinGweiInput, {DEFAULT_P_TERM_MIN_GWEI});
     const ki = parsePositive(kiInput, 0);
     const kd = parsePositive(kdInput, 0);
     const iMinRaw = parseNumber(iMinInput, -5);
@@ -982,6 +985,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const alphaBlob = autoAlphaEnabled ? autoAlphaBlob : parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB);
 
     const priorityFeeWei = priorityFeeGwei * 1e9;
+    const pTermMinWei = pTermMinGwei * 1e9;
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
     const feeRangeWei = maxFeeWei - minFeeWei;
@@ -1069,7 +1073,8 @@ def build_app_js(blocks, base, blob, time_anchor):
       const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
       derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
 
-      const pTermWei = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
+      const pTermWeiRaw = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
+      const pTermWei = modeUsesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
       const iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
       const dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
       const feedbackWei = pTermWei + iTermWei + dTermWei;
@@ -1199,6 +1204,7 @@ def build_app_js(blocks, base, blob, time_anchor):
           maxFeeWei,
           maxFeeGwei,
           feeRangeWei: maxFeeWei - minFeeWei,
+          pTermMinWei,
           initialVaultEth,
           targetVaultEth,
           alphaGas,
@@ -1276,7 +1282,8 @@ def build_app_js(blocks, base, blob, time_anchor):
             simCfg.alphaBlob * blobBaseFeeFfWei
           )
         : 0;
-      const pTermWei = modeFlags.usesP ? (candidate.kp * epsilon * simCfg.feeRangeWei) : 0;
+      const pTermWeiRaw = modeFlags.usesP ? (candidate.kp * epsilon * simCfg.feeRangeWei) : 0;
+      const pTermWei = modeFlags.usesP ? Math.max(simCfg.pTermMinWei, pTermWeiRaw) : 0;
       const iTermWei = modeFlags.usesI ? (candidate.ki * integralState * simCfg.feeRangeWei) : 0;
       const dTermWei = modeFlags.usesD ? (candidate.kd * derivFiltered * simCfg.feeRangeWei) : 0;
       const feedbackWei = pTermWei + iTermWei + dTermWei;
@@ -1515,6 +1522,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, {DEFAULT_D_FF_BLOCKS});
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
     const derivBeta = clampNum(parseNumber(dSmoothBetaInput, {DEFAULT_DERIV_BETA}), 0, 1);
+    const pTermMinGwei = parseNumber(pMinGweiInput, {DEFAULT_P_TERM_MIN_GWEI});
     const iMinRaw = parseNumber(iMinInput, -5);
     const iMaxRaw = parseNumber(iMaxInput, 5);
     const iMin = Math.min(iMinRaw, iMaxRaw);
@@ -1522,6 +1530,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const minFeeWei = parsePositive(minFeeGweiInput, 0) * 1e9;
     const maxFeeGwei = parsePositive(maxFeeGweiInput, {DEFAULT_MAX_FEE_GWEI});
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
+    const pTermMinWei = pTermMinGwei * 1e9;
     const initialVaultEth = parsePositive(initialVaultEthInput, 0);
     const targetVaultEth = parsePositive(targetVaultEthInput, 0);
     const alphaGasFixed = parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS);
@@ -1541,6 +1550,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       maxFeeWei,
       maxFeeGwei,
       feeRangeWei: maxFeeWei - minFeeWei,
+      pTermMinWei,
       initialVaultEth,
       targetVaultEth,
       alphaGas: alphaGasFixed,
@@ -2079,6 +2089,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     dfbBlocksInput,
     dSmoothBetaInput,
     kpInput,
+    pMinGweiInput,
     kiInput,
     kdInput,
     iMinInput,
@@ -2326,6 +2337,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <label>Alpha gas <input id=\"alphaGas\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_GAS:.6f}\" /></label>
             <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
             <label>Kp <input id=\"kp\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KP:g}\" /></label>
+            <label>P floor (gwei/L2 gas) <input id=\"pMinGwei\" type=\"number\" step=\"0.0001\" value=\"{DEFAULT_P_TERM_MIN_GWEI:g}\" /></label>
             <label>Ki <input id=\"ki\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KI:g}\" /></label>
             <label>Kd <input id=\"kd\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KD:g}\" /></label>
             <label>I min <input id=\"iMin\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MIN:g}\" /></label>
@@ -2343,7 +2355,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           <div class=\"formula\">FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</div>
           <div class=\"formula\">de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</div>
           <div class=\"formula\">D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</div>
-          <div class=\"formula\">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</div>
+          <div class=\"formula\">P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</div>
           <div class=\"formula\">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
           <div class=\"formula\">Assume L1 block time = 12s; derived <strong id=\"derivedL2GasPerL1Block\">-</strong> and <strong id=\"derivedL2GasPerProposal\">-</strong></div>
           <div class=\"formula\">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
