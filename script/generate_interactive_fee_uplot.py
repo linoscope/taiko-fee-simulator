@@ -22,10 +22,12 @@ DEFAULT_MAX_FEE_GWEI = 1.0
 DEFAULT_INITIAL_VAULT_ETH = 10.0
 DEFAULT_TARGET_VAULT_ETH = 10.0
 DEFAULT_CONTROLLER_MODE = "alpha-only"
-DEFAULT_D_FF_BLOCKS = 0
-DEFAULT_D_FB_BLOCKS = 12
+DEFAULT_D_FF_BLOCKS = 5
+DEFAULT_D_FB_BLOCKS = 5
 DEFAULT_KP = 0.1
 DEFAULT_KI = 0.0
+DEFAULT_KD = 0.0
+DEFAULT_DERIV_BETA = 0.8
 DEFAULT_I_MIN = -5.0
 DEFAULT_I_MAX = 5.0
 DEFAULT_DEFICIT_DEADBAND_PCT = 5.0
@@ -285,8 +287,10 @@ def build_app_js(blocks, base, blob, time_anchor):
   const controllerModeInput = document.getElementById('controllerMode');
   const dffBlocksInput = document.getElementById('dffBlocks');
   const dfbBlocksInput = document.getElementById('dfbBlocks');
+  const dSmoothBetaInput = document.getElementById('dSmoothBeta');
   const kpInput = document.getElementById('kp');
   const kiInput = document.getElementById('ki');
+  const kdInput = document.getElementById('kd');
   const iMinInput = document.getElementById('iMin');
   const iMaxInput = document.getElementById('iMax');
   const minFeeGweiInput = document.getElementById('minFeeGwei');
@@ -317,8 +321,10 @@ def build_app_js(blocks, base, blob, time_anchor):
   const latestL2GasUsed = document.getElementById('latestL2GasUsed');
   const latestDeficitEth = document.getElementById('latestDeficitEth');
   const latestEpsilon = document.getElementById('latestEpsilon');
+  const latestDerivative = document.getElementById('latestDerivative');
   const latestIntegral = document.getElementById('latestIntegral');
   const latestFfTerm = document.getElementById('latestFfTerm');
+  const latestDTerm = document.getElementById('latestDTerm');
   const latestFbTerm = document.getElementById('latestFbTerm');
   const latestClampState = document.getElementById('latestClampState');
   const latestVaultValue = document.getElementById('latestVaultValue');
@@ -651,46 +657,62 @@ def build_app_js(blocks, base, blob, time_anchor):
     }}
   }}
 
+  function ensureFeedforwardDefaults() {{
+    const alphaGasNow = parsePositive(alphaGasInput, 0);
+    const alphaBlobNow = parsePositive(alphaBlobInput, 0);
+    if (!autoAlphaInput.checked && alphaGasNow === 0 && alphaBlobNow === 0) {{
+      alphaGasInput.value = DEFAULT_ALPHA_GAS.toFixed(6);
+      alphaBlobInput.value = DEFAULT_ALPHA_BLOB.toFixed(6);
+    }}
+  }}
+
+  function disableFeedforward() {{
+    autoAlphaInput.checked = false;
+    alphaGasInput.value = '0';
+    alphaBlobInput.value = '0';
+  }}
+
   function applyControllerModePreset(mode) {{
     if (mode === 'alpha-only') {{
       kpInput.value = '0';
       kiInput.value = '0';
-      const alphaGasNow = parsePositive(alphaGasInput, 0);
-      const alphaBlobNow = parsePositive(alphaBlobInput, 0);
-      if (!autoAlphaInput.checked && alphaGasNow === 0 && alphaBlobNow === 0) {{
-        alphaGasInput.value = DEFAULT_ALPHA_GAS.toFixed(6);
-        alphaBlobInput.value = DEFAULT_ALPHA_BLOB.toFixed(6);
-      }}
+      kdInput.value = '0';
+      ensureFeedforwardDefaults();
       return;
     }}
 
     if (mode === 'p') {{
-      // P-only preset: disable feedforward and integral contribution.
-      autoAlphaInput.checked = false;
-      alphaGasInput.value = '0';
-      alphaBlobInput.value = '0';
+      disableFeedforward();
       kiInput.value = '0';
+      kdInput.value = '0';
       return;
     }}
 
     if (mode === 'pi') {{
-      // PI-only preset: disable feedforward contribution.
-      autoAlphaInput.checked = false;
-      alphaGasInput.value = '0';
-      alphaBlobInput.value = '0';
+      disableFeedforward();
+      kdInput.value = '0';
+      return;
+    }}
+
+    if (mode === 'pd') {{
+      disableFeedforward();
+      kiInput.value = '0';
+      return;
+    }}
+
+    if (mode === 'pdi') {{
+      disableFeedforward();
       return;
     }}
 
     if (mode === 'pi+ff') {{
-      // PI + feedforward: keep both paths enabled.
-      if (!autoAlphaInput.checked) {{
-        const alphaGasNow = parsePositive(alphaGasInput, 0);
-        const alphaBlobNow = parsePositive(alphaBlobInput, 0);
-        if (alphaGasNow === 0 && alphaBlobNow === 0) {{
-          alphaGasInput.value = DEFAULT_ALPHA_GAS.toFixed(6);
-          alphaBlobInput.value = DEFAULT_ALPHA_BLOB.toFixed(6);
-        }}
-      }}
+      kdInput.value = '0';
+      ensureFeedforwardDefaults();
+      return;
+    }}
+
+    if (mode === 'pdi+ff') {{
+      ensureFeedforwardDefaults();
     }}
   }}
 
@@ -759,10 +781,12 @@ def build_app_js(blocks, base, blob, time_anchor):
   let derivedFeedforwardFeeGwei = [];
   let derivedPTermFeeGwei = [];
   let derivedITermFeeGwei = [];
+  let derivedDTermFeeGwei = [];
   let derivedFeedbackFeeGwei = [];
   let derivedChargedFeeGwei = [];
   let derivedDeficitEth = [];
   let derivedEpsilon = [];
+  let derivedDerivative = [];
   let derivedIntegral = [];
   let derivedClampState = [];
   let derivedVaultEth = [];
@@ -782,10 +806,12 @@ def build_app_js(blocks, base, blob, time_anchor):
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
     const controllerMode = controllerModeInput.value || 'alpha-only';
-    const dffBlocks = parseNonNegativeInt(dffBlocksInput, 0);
-    const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 12);
+    const dffBlocks = parseNonNegativeInt(dffBlocksInput, {DEFAULT_D_FF_BLOCKS});
+    const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
+    const derivBeta = clampNum(parseNumber(dSmoothBetaInput, {DEFAULT_DERIV_BETA}), 0, 1);
     const kp = parsePositive(kpInput, 0);
     const ki = parsePositive(kiInput, 0);
+    const kd = parsePositive(kdInput, 0);
     const iMinRaw = parseNumber(iMinInput, -5);
     const iMaxRaw = parseNumber(iMaxInput, 5);
     const iMin = Math.min(iMinRaw, iMaxRaw);
@@ -813,6 +839,30 @@ def build_app_js(blocks, base, blob, time_anchor):
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
     const feeRangeWei = maxFeeWei - minFeeWei;
+    const modeUsesFeedforward = (
+      controllerMode === 'alpha-only' ||
+      controllerMode === 'pi+ff' ||
+      controllerMode === 'pdi+ff'
+    );
+    const modeUsesP = (
+      controllerMode === 'p' ||
+      controllerMode === 'pi' ||
+      controllerMode === 'pd' ||
+      controllerMode === 'pdi' ||
+      controllerMode === 'pi+ff' ||
+      controllerMode === 'pdi+ff'
+    );
+    const modeUsesI = (
+      controllerMode === 'pi' ||
+      controllerMode === 'pdi' ||
+      controllerMode === 'pi+ff' ||
+      controllerMode === 'pdi+ff'
+    );
+    const modeUsesD = (
+      controllerMode === 'pd' ||
+      controllerMode === 'pdi' ||
+      controllerMode === 'pdi+ff'
+    );
 
     derivedL2GasPerL1BlockText.textContent =
       `${{formatNum(l2GasPerL1BlockBase, 0)}} gas/L1 block (base), ` +
@@ -842,10 +892,12 @@ def build_app_js(blocks, base, blob, time_anchor):
     derivedFeedforwardFeeGwei = new Array(n);
     derivedPTermFeeGwei = new Array(n);
     derivedITermFeeGwei = new Array(n);
+    derivedDTermFeeGwei = new Array(n);
     derivedFeedbackFeeGwei = new Array(n);
     derivedChargedFeeGwei = new Array(n);
     derivedDeficitEth = new Array(n);
     derivedEpsilon = new Array(n);
+    derivedDerivative = new Array(n);
     derivedIntegral = new Array(n);
     derivedClampState = new Array(n);
     derivedVaultEth = new Array(n);
@@ -854,6 +906,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     let vault = initialVaultEth;
     let pendingRevenueEth = 0;
     let integralState = 0;
+    let epsilonPrev = 0;
+    let derivFiltered = 0;
 
     for (let i = 0; i < n; i++) {{
       const baseFeeWei = baseFeeGwei[i] * 1e9;
@@ -879,19 +933,20 @@ def build_app_js(blocks, base, blob, time_anchor):
       const deficitEth = targetVaultEth - observedVault;
       const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
 
-      if (controllerMode === 'pi' || controllerMode === 'pi+ff') {{
+      if (modeUsesI) {{
         integralState = clampNum(integralState + epsilon, iMin, iMax);
       }} else {{
         integralState = 0;
       }}
 
-      const pTermWei = (controllerMode === 'alpha-only') ? 0 : (kp * epsilon * feeRangeWei);
-      const iTermWei =
-        (controllerMode === 'pi' || controllerMode === 'pi+ff')
-          ? (ki * integralState * feeRangeWei)
-          : 0;
-      const feedbackWei = pTermWei + iTermWei;
-      const feedforwardWei = gasComponentWei + blobComponentWei;
+      const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
+      derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
+
+      const pTermWei = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
+      const iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
+      const dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
+      const feedbackWei = pTermWei + iTermWei + dTermWei;
+      const feedforwardWei = modeUsesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
       const chargedFeeWeiPerL2Gas = Math.max(
         minFeeWei,
         Math.min(maxFeeWei, feedforwardWei + feedbackWei)
@@ -906,10 +961,12 @@ def build_app_js(blocks, base, blob, time_anchor):
       derivedFeedforwardFeeGwei[i] = feedforwardWei / 1e9;
       derivedPTermFeeGwei[i] = pTermWei / 1e9;
       derivedITermFeeGwei[i] = iTermWei / 1e9;
+      derivedDTermFeeGwei[i] = dTermWei / 1e9;
       derivedFeedbackFeeGwei[i] = feedbackWei / 1e9;
       derivedChargedFeeGwei[i] = chargedFeeWeiPerL2Gas / 1e9;
       derivedDeficitEth[i] = deficitEth;
       derivedEpsilon[i] = epsilon;
+      derivedDerivative[i] = derivFiltered;
       derivedIntegral[i] = integralState;
       derivedClampState[i] = clampState;
 
@@ -935,6 +992,7 @@ def build_app_js(blocks, base, blob, time_anchor):
 
       derivedVaultEth[i] = vault;
       derivedVaultTargetEth[i] = targetVaultEth;
+      epsilonPrev = epsilon;
     }}
 
     const preservedRange = getCurrentXRange();
@@ -953,6 +1011,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         derivedFeedforwardFeeGwei,
         derivedPTermFeeGwei,
         derivedITermFeeGwei,
+        derivedDTermFeeGwei,
         derivedFeedbackFeeGwei,
         derivedChargedFeeGwei
       ]);
@@ -960,6 +1019,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         blocks,
         derivedDeficitEth,
         derivedEpsilon,
+        derivedDerivative,
         derivedIntegral
       ]);
       vaultPlot.setData([blocks, derivedVaultTargetEth, derivedVaultEth]);
@@ -986,8 +1046,10 @@ def build_app_js(blocks, base, blob, time_anchor):
     }}
     latestDeficitEth.textContent = `${{formatNum(derivedDeficitEth[lastIdx], 6)}} ETH`;
     latestEpsilon.textContent = `${{formatNum(derivedEpsilon[lastIdx], 6)}}`;
+    latestDerivative.textContent = `${{formatNum(derivedDerivative[lastIdx], 6)}}`;
     latestIntegral.textContent = `${{formatNum(derivedIntegral[lastIdx], 6)}}`;
     latestFfTerm.textContent = `${{formatNum(derivedFeedforwardFeeGwei[lastIdx], 4)}} gwei/L2gas`;
+    latestDTerm.textContent = `${{formatNum(derivedDTermFeeGwei[lastIdx], 4)}} gwei/L2gas`;
     latestFbTerm.textContent = `${{formatNum(derivedFeedbackFeeGwei[lastIdx], 4)}} gwei/L2gas`;
     latestClampState.textContent = derivedClampState[lastIdx];
     latestVaultValue.textContent = `${{formatNum(derivedVaultEth[lastIdx], 6)}} ETH`;
@@ -1138,7 +1200,7 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   function makeControllerOpts(width, height) {{
     return {{
-      title: 'Controller Components (Feedforward + PI)',
+      title: 'Controller Components (Feedforward + P/I/D)',
       width,
       height,
       scales: {{ x: {{ time: false }} }},
@@ -1147,6 +1209,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         {{ label: 'FF term (gwei/L2 gas)', stroke: '#334155', width: 1.2 }},
         {{ label: 'P term (gwei/L2 gas)', stroke: '#2563eb', width: 1.0 }},
         {{ label: 'I term (gwei/L2 gas)', stroke: '#f59e0b', width: 1.0 }},
+        {{ label: 'D term (gwei/L2 gas)', stroke: '#ec4899', width: 1.0 }},
         {{ label: 'FB total (gwei/L2 gas)', stroke: '#7c3aed', width: 1.0 }},
         {{ label: 'Charged fee (gwei/L2 gas)', stroke: '#16a34a', width: 1.4 }}
       ],
@@ -1166,7 +1229,7 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   function makeFeedbackOpts(width, height) {{
     return {{
-      title: 'Feedback State (D, epsilon, I)',
+      title: 'Feedback State (D, epsilon, dE, I)',
       width,
       height,
       scales: {{ x: {{ time: false }} }},
@@ -1174,6 +1237,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'Deficit D (ETH)', stroke: '#dc2626', width: 1.2 }},
         {{ label: 'Normalized deficit epsilon', stroke: '#0891b2', width: 1.0 }},
+        {{ label: 'Filtered derivative dE_f', stroke: '#ec4899', width: 1.0 }},
         {{ label: 'Integral I', stroke: '#7c2d12', width: 1.0 }}
       ],
       axes: [
@@ -1266,13 +1330,13 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   controllerPlot = new uPlot(
     makeControllerOpts(width, 320),
-    [blocks, [], [], [], [], []],
+    [blocks, [], [], [], [], [], []],
     controllerWrap
   );
 
   feedbackPlot = new uPlot(
     makeFeedbackOpts(width, 320),
-    [blocks, [], [], []],
+    [blocks, [], [], [], []],
     feedbackWrap
   );
 
@@ -1345,8 +1409,10 @@ def build_app_js(blocks, base, blob, time_anchor):
     alphaBlobInput,
     dffBlocksInput,
     dfbBlocksInput,
+    dSmoothBetaInput,
     kpInput,
     kiInput,
+    kdInput,
     iMinInput,
     iMaxInput,
     minFeeGweiInput,
@@ -1562,7 +1628,10 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
                 <option value=\"alpha-only\"{" selected" if DEFAULT_CONTROLLER_MODE == "alpha-only" else ""}>alpha-only</option>
                 <option value=\"p\"{" selected" if DEFAULT_CONTROLLER_MODE == "p" else ""}>p</option>
                 <option value=\"pi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi" else ""}>pi</option>
+                <option value=\"pd\"{" selected" if DEFAULT_CONTROLLER_MODE == "pd" else ""}>pd</option>
+                <option value=\"pdi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pdi" else ""}>pdi</option>
                 <option value=\"pi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi+ff" else ""}>pi+ff</option>
+                <option value=\"pdi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pdi+ff" else ""}>pdi+ff</option>
               </select>
             </label>
             <label><input id=\"autoAlpha\" type=\"checkbox\" checked /> Auto alpha</label>
@@ -1570,10 +1639,12 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
             <label>Kp <input id=\"kp\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KP:g}\" /></label>
             <label>Ki <input id=\"ki\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KI:g}\" /></label>
+            <label>Kd <input id=\"kd\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KD:g}\" /></label>
             <label>I min <input id=\"iMin\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MIN:g}\" /></label>
             <label>I max <input id=\"iMax\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MAX:g}\" /></label>
             <label>Feedforward delay d_ff (L1 blocks) <input id=\"dffBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FF_BLOCKS}\" /></label>
             <label>Feedback delay d_fb (L1 blocks) <input id=\"dfbBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FB_BLOCKS}\" /></label>
+            <label>D smoothing beta <input id=\"dSmoothBeta\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"{DEFAULT_DERIV_BETA:g}\" /></label>
             <label>Min fee (gwei/L2 gas) <input id=\"minFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MIN_FEE_GWEI:g}\" /></label>
             <label>Max fee (gwei/L2 gas) <input id=\"maxFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MAX_FEE_GWEI:.1f}\" /></label>
             <label>Initial vault (ETH) <input id=\"initialVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_INITIAL_VAULT_ETH:g}\" /></label>
@@ -1582,8 +1653,9 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           </div>
           <div class=\"formula\">cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</div>
           <div class=\"formula\">FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</div>
+          <div class=\"formula\">de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</div>
           <div class=\"formula\">D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</div>
-          <div class=\"formula\">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee), minFee, maxFee)</div>
+          <div class=\"formula\">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</div>
           <div class=\"formula\">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
           <div class=\"formula\">Assume L1 block time = 12s; derived <strong id=\"derivedL2GasPerL1Block\">-</strong> and <strong id=\"derivedL2GasPerProposal\">-</strong></div>
           <div class=\"formula\">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
@@ -1597,8 +1669,10 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>Latest blob component fee: <strong id=\"latestBlobComponentFee\">-</strong></span>
             <span>Latest deficit D: <strong id=\"latestDeficitEth\">-</strong></span>
             <span>Latest epsilon: <strong id=\"latestEpsilon\">-</strong></span>
+            <span>Latest filtered derivative dE_f: <strong id=\"latestDerivative\">-</strong></span>
             <span>Latest integral I: <strong id=\"latestIntegral\">-</strong></span>
             <span>Latest FF term: <strong id=\"latestFfTerm\">-</strong></span>
+            <span>Latest D term: <strong id=\"latestDTerm\">-</strong></span>
             <span>Latest FB term: <strong id=\"latestFbTerm\">-</strong></span>
             <span>Latest clamp state: <strong id=\"latestClampState\">-</strong></span>
             <span>Latest L2 gas used: <strong id=\"latestL2GasUsed\">-</strong></span>

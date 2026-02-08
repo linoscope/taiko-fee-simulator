@@ -153,7 +153,10 @@
                 <option value="alpha-only" selected>alpha-only</option>
                 <option value="p">p</option>
                 <option value="pi">pi</option>
+                <option value="pd">pd</option>
+                <option value="pdi">pdi</option>
                 <option value="pi+ff">pi+ff</option>
+                <option value="pdi+ff">pdi+ff</option>
               </select>
             </label>
             <label><input id="autoAlpha" type="checkbox" checked /> Auto alpha</label>
@@ -161,10 +164,12 @@
             <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.000437" /></label>
             <label>Kp <input id="kp" type="number" min="0" step="0.001" value="0.1" /></label>
             <label>Ki <input id="ki" type="number" min="0" step="0.001" value="0" /></label>
+            <label>Kd <input id="kd" type="number" min="0" step="0.001" value="0" /></label>
             <label>I min <input id="iMin" type="number" step="0.1" value="-5" /></label>
             <label>I max <input id="iMax" type="number" step="0.1" value="5" /></label>
-            <label>Feedforward delay d_ff (L1 blocks) <input id="dffBlocks" type="number" min="0" step="1" value="0" /></label>
-            <label>Feedback delay d_fb (L1 blocks) <input id="dfbBlocks" type="number" min="0" step="1" value="12" /></label>
+            <label>Feedforward delay d_ff (L1 blocks) <input id="dffBlocks" type="number" min="0" step="1" value="5" /></label>
+            <label>Feedback delay d_fb (L1 blocks) <input id="dfbBlocks" type="number" min="0" step="1" value="5" /></label>
+            <label>D smoothing beta <input id="dSmoothBeta" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
             <label>Min fee (gwei/L2 gas) <input id="minFeeGwei" type="number" min="0" step="0.0001" value="0" /></label>
             <label>Max fee (gwei/L2 gas) <input id="maxFeeGwei" type="number" min="0" step="0.0001" value="1.0" /></label>
             <label>Initial vault (ETH) <input id="initialVaultEth" type="number" min="0" step="0.1" value="10" /></label>
@@ -173,8 +178,9 @@
           </div>
           <div class="formula">cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</div>
           <div class="formula">FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</div>
+          <div class="formula">de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</div>
           <div class="formula">D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</div>
-          <div class="formula">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee), minFee, maxFee)</div>
+          <div class="formula">fee_t = clamp(FF_t + Kp*epsilon_t*(maxFee-minFee) + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</div>
           <div class="formula">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
           <div class="formula">Assume L1 block time = 12s; derived <strong id="derivedL2GasPerL1Block">-</strong> and <strong id="derivedL2GasPerProposal">-</strong></div>
           <div class="formula">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
@@ -188,8 +194,10 @@
             <span>Latest blob component fee: <strong id="latestBlobComponentFee">-</strong></span>
             <span>Latest deficit D: <strong id="latestDeficitEth">-</strong></span>
             <span>Latest epsilon: <strong id="latestEpsilon">-</strong></span>
+            <span>Latest filtered derivative dE_f: <strong id="latestDerivative">-</strong></span>
             <span>Latest integral I: <strong id="latestIntegral">-</strong></span>
             <span>Latest FF term: <strong id="latestFfTerm">-</strong></span>
+            <span>Latest D term: <strong id="latestDTerm">-</strong></span>
             <span>Latest FB term: <strong id="latestFbTerm">-</strong></span>
             <span>Latest clamp state: <strong id="latestClampState">-</strong></span>
             <span>Latest L2 gas used: <strong id="latestL2GasUsed">-</strong></span>
