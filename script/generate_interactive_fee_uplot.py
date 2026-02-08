@@ -3,7 +3,10 @@
 import argparse
 import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+
+import requests
 
 L1_BLOCK_TIME_SECONDS = 12
 BLOB_GAS_PER_BLOB = 131_072
@@ -25,6 +28,22 @@ DEFAULT_KP = 0.1
 DEFAULT_KI = 0.0
 DEFAULT_I_MIN = -5.0
 DEFAULT_I_MAX = 5.0
+DEFAULT_DEFICIT_DEADBAND_PCT = 5.0
+
+DEFAULT_HEALTH_WEIGHT = 0.75
+DEFAULT_UX_WEIGHT = 0.25
+
+DEFAULT_HEALTH_W_DRAW = 0.35
+DEFAULT_HEALTH_W_UNDER = 0.25
+DEFAULT_HEALTH_W_AREA = 0.20
+DEFAULT_HEALTH_W_GAP = 0.10
+DEFAULT_HEALTH_W_STREAK = 0.10
+
+DEFAULT_UX_W_STD = 0.30
+DEFAULT_UX_W_P95 = 0.30
+DEFAULT_UX_W_P99 = 0.20
+DEFAULT_UX_W_MAXSTEP = 0.10
+DEFAULT_UX_W_CLAMP = 0.10
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -32,6 +51,9 @@ DEFAULT_L2_GAS_PER_L1_BLOCK = (
 DEFAULT_L2_GAS_PER_PROPOSAL = DEFAULT_L2_GAS_PER_L1_BLOCK * DEFAULT_POST_EVERY_BLOCKS
 DEFAULT_ALPHA_GAS = DEFAULT_L1_GAS_USED / DEFAULT_L2_GAS_PER_PROPOSAL
 DEFAULT_ALPHA_BLOB = (DEFAULT_NUM_BLOBS * BLOB_GAS_PER_BLOB) / DEFAULT_L2_GAS_PER_PROPOSAL
+DEFAULT_TIMESTAMP_CACHE = (
+    Path(__file__).resolve().parents[1] / "data" / "eth_block_timestamp_cache.json"
+)
 
 
 def read_fee_csv(csv_path: Path):
@@ -51,10 +73,178 @@ def read_fee_csv(csv_path: Path):
     return blocks, base, blob
 
 
-def build_app_js(blocks, base, blob):
+def rpc_block_timestamp(block_number: int, rpc_url: str, timeout_sec: int = 20):
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_getBlockByNumber",
+        "params": [hex(block_number), False],
+    }
+    try:
+        resp = requests.post(rpc_url, json=payload, timeout=timeout_sec)
+        resp.raise_for_status()
+        data = resp.json()
+        result = data.get("result")
+        if not result or "timestamp" not in result:
+            return None
+        return int(result["timestamp"], 16)
+    except (requests.RequestException, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def load_timestamp_cache(cache_path: Path | None):
+    if cache_path is None or not cache_path.exists():
+        return {}
+    try:
+        raw = json.loads(cache_path.read_text())
+        if not isinstance(raw, dict):
+            return {}
+        out = {}
+        for k, v in raw.items():
+            try:
+                out[str(k)] = int(v)
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def save_timestamp_cache(cache_path: Path | None, cache: dict):
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache, separators=(",", ":"), sort_keys=True))
+
+
+def get_block_timestamp_cached(block_number: int, rpc_url: str | None, cache: dict):
+    key = str(block_number)
+    if key in cache:
+        try:
+            return int(cache[key]), "cache"
+        except Exception:
+            pass
+
+    if not rpc_url:
+        return None, "none"
+
+    ts = rpc_block_timestamp(block_number, rpc_url)
+    if ts is not None:
+        cache[key] = int(ts)
+        return int(ts), "rpc"
+
+    return None, "rpc_failed"
+
+
+def read_time_anchor(
+    csv_path: Path,
+    min_block: int,
+    max_block: int,
+    rpc_url: str | None,
+    ts_cache: dict,
+):
+    summary_path = csv_path.with_name(csv_path.stem + "_summary.json")
+    default = {
+        "has_anchor": False,
+        "anchor_block": 0,
+        "anchor_ts_sec": 0,
+        "seconds_per_block": float(L1_BLOCK_TIME_SECONDS),
+        "source": "default_12s",
+    }
+
+    summary = {}
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text())
+        except Exception:
+            summary = {}
+
+    def get_int(keys):
+        for k in keys:
+            if k in summary:
+                try:
+                    return int(summary[k])
+                except Exception:
+                    pass
+        return None
+
+    def get_ts(keys):
+        for k in keys:
+            raw = summary.get(k)
+            if not raw:
+                continue
+            try:
+                dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                return int(dt.astimezone(timezone.utc).timestamp())
+            except Exception:
+                continue
+        return None
+
+    start_block = get_int(["window_start_block", "start_block"])
+    end_block = get_int(["window_end_block", "end_block"])
+    if start_block is None:
+        start_block = min_block
+    if end_block is None:
+        end_block = max_block
+    start_ts = get_ts(["window_start_timestamp_utc"])
+    end_ts = get_ts(["window_end_timestamp_utc", "latest_block_timestamp_utc"])
+    start_ts_source = "summary" if start_ts is not None else "missing"
+    end_ts_source = "summary" if end_ts is not None else "missing"
+
+    if start_ts is None and start_block is not None:
+        start_ts, start_ts_source = get_block_timestamp_cached(start_block, rpc_url, ts_cache)
+    if end_ts is None and end_block is not None:
+        end_ts, end_ts_source = get_block_timestamp_cached(end_block, rpc_url, ts_cache)
+
+    seconds_per_block = float(L1_BLOCK_TIME_SECONDS)
+    if (
+        start_block is not None
+        and end_block is not None
+        and start_ts is not None
+        and end_ts is not None
+        and end_block > start_block
+        and end_ts > start_ts
+    ):
+        seconds_per_block = (end_ts - start_ts) / (end_block - start_block)
+
+    if start_block is not None and start_ts is not None:
+        anchor_source = (
+            "summary_start_anchor" if start_ts_source == "summary"
+            else "cache_start_anchor" if start_ts_source == "cache"
+            else "rpc_start_anchor" if start_ts_source == "rpc"
+            else "start_anchor"
+        )
+        return {
+            "has_anchor": True,
+            "anchor_block": int(start_block),
+            "anchor_ts_sec": int(start_ts),
+            "seconds_per_block": float(seconds_per_block),
+            "source": anchor_source,
+        }
+
+    if end_block is not None and end_ts is not None:
+        anchor_source = (
+            "summary_end_anchor" if end_ts_source == "summary"
+            else "cache_end_anchor" if end_ts_source == "cache"
+            else "rpc_end_anchor" if end_ts_source == "rpc"
+            else "end_anchor"
+        )
+        return {
+            "has_anchor": True,
+            "anchor_block": int(end_block),
+            "anchor_ts_sec": int(end_ts),
+            "seconds_per_block": float(seconds_per_block),
+            "source": anchor_source,
+        }
+
+    return default
+
+
+def build_app_js(blocks, base, blob, time_anchor):
     blocks_json = json.dumps(blocks, separators=(",", ":"))
     base_json = json.dumps(base, separators=(",", ":"))
     blob_json = json.dumps(blob, separators=(",", ":"))
+    has_anchor = "true" if time_anchor["has_anchor"] else "false"
 
     return f"""(function () {{
   const blocks = {blocks_json};
@@ -65,6 +255,11 @@ def build_app_js(blocks, base, blob):
   const MAX_BLOCK = blocks[blocks.length - 1];
   const BLOB_GAS_PER_BLOB = {BLOB_GAS_PER_BLOB};
   const L1_BLOCK_TIME_SECONDS = {L1_BLOCK_TIME_SECONDS};
+  const HAS_BLOCK_TIME_ANCHOR = {has_anchor};
+  const BLOCK_TIME_APPROX_SECONDS = {time_anchor["seconds_per_block"]:.6f};
+  const ANCHOR_BLOCK = {int(time_anchor["anchor_block"])};
+  const ANCHOR_TIMESTAMP_SEC = {int(time_anchor["anchor_ts_sec"])};
+  const TIME_ANCHOR_SOURCE = {json.dumps(time_anchor["source"])};
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
   const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
@@ -72,6 +267,8 @@ def build_app_js(blocks, base, blob):
   const minInput = document.getElementById('minBlock');
   const maxInput = document.getElementById('maxBlock');
   const rangeText = document.getElementById('rangeText');
+  const rangeDateText = document.getElementById('rangeDateText');
+  const hoverText = document.getElementById('hoverText');
   const status = document.getElementById('status');
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
@@ -96,6 +293,19 @@ def build_app_js(blocks, base, blob):
   const maxFeeGweiInput = document.getElementById('maxFeeGwei');
   const initialVaultEthInput = document.getElementById('initialVaultEth');
   const targetVaultEthInput = document.getElementById('targetVaultEth');
+  const deficitDeadbandPctInput = document.getElementById('deficitDeadbandPct');
+  const scoreWeightHealthInput = document.getElementById('scoreWeightHealth');
+  const scoreWeightUxInput = document.getElementById('scoreWeightUx');
+  const healthWDrawInput = document.getElementById('healthWDraw');
+  const healthWUnderInput = document.getElementById('healthWUnder');
+  const healthWAreaInput = document.getElementById('healthWArea');
+  const healthWGapInput = document.getElementById('healthWGap');
+  const healthWStreakInput = document.getElementById('healthWStreak');
+  const uxWStdInput = document.getElementById('uxWStd');
+  const uxWP95Input = document.getElementById('uxWP95');
+  const uxWP99Input = document.getElementById('uxWP99');
+  const uxWMaxStepInput = document.getElementById('uxWMaxStep');
+  const uxWClampInput = document.getElementById('uxWClamp');
 
   const derivedL2GasPerL1BlockText = document.getElementById('derivedL2GasPerL1Block');
   const derivedL2GasPerProposalText = document.getElementById('derivedL2GasPerProposal');
@@ -113,6 +323,25 @@ def build_app_js(blocks, base, blob):
   const latestClampState = document.getElementById('latestClampState');
   const latestVaultValue = document.getElementById('latestVaultValue');
   const latestVaultGap = document.getElementById('latestVaultGap');
+  const scoreHealthBadness = document.getElementById('scoreHealthBadness');
+  const scoreUxBadness = document.getElementById('scoreUxBadness');
+  const scoreTotalBadness = document.getElementById('scoreTotalBadness');
+  const scoreWeightSummary = document.getElementById('scoreWeightSummary');
+  const healthMaxDrawdown = document.getElementById('healthMaxDrawdown');
+  const healthUnderTargetRatio = document.getElementById('healthUnderTargetRatio');
+  const healthAbsFinalGap = document.getElementById('healthAbsFinalGap');
+  const healthDeficitAreaBand = document.getElementById('healthDeficitAreaBand');
+  const healthWorstDeficitStreak = document.getElementById('healthWorstDeficitStreak');
+  const uxFeeStd = document.getElementById('uxFeeStd');
+  const uxFeeStepP95 = document.getElementById('uxFeeStepP95');
+  const uxFeeStepP99 = document.getElementById('uxFeeStepP99');
+  const uxFeeStepMax = document.getElementById('uxFeeStepMax');
+  const uxClampMaxRatio = document.getElementById('uxClampMaxRatio');
+  const healthFormulaLine = document.getElementById('healthFormulaLine');
+  const uxFormulaLine = document.getElementById('uxFormulaLine');
+  const totalFormulaLine = document.getElementById('totalFormulaLine');
+  const scoreBtn = document.getElementById('scoreBtn');
+  const scoreStatus = document.getElementById('scoreStatus');
 
   const l2GasWrap = document.getElementById('l2GasPlot');
   const baseWrap = document.getElementById('basePlot');
@@ -142,8 +371,66 @@ def build_app_js(blocks, base, blob):
     return [x, y];
   }}
 
+  function blockToApproxUnixMs(blockNum) {{
+    if (!HAS_BLOCK_TIME_ANCHOR) return null;
+    return (ANCHOR_TIMESTAMP_SEC + (blockNum - ANCHOR_BLOCK) * BLOCK_TIME_APPROX_SECONDS) * 1000;
+  }}
+
+  function fmtApproxUtc(ms) {{
+    if (!Number.isFinite(ms)) return 'n/a';
+    const iso = new Date(ms).toISOString();
+    return `${{iso.slice(0, 16).replace('T', ' ')}} UTC`;
+  }}
+
+  function fmtApproxSpan(msA, msB) {{
+    if (!Number.isFinite(msA) || !Number.isFinite(msB)) return 'n/a';
+    const sec = Math.max(0, Math.round((msB - msA) / 1000));
+    const days = Math.floor(sec / 86400);
+    const hours = Math.floor((sec % 86400) / 3600);
+    return `${{days}}d ${{hours}}h`;
+  }}
+
+  function formatBlockWithApprox(blockNum) {{
+    if (!Number.isFinite(blockNum)) return '';
+    const ms = blockToApproxUnixMs(blockNum);
+    if (!Number.isFinite(ms)) return Number(blockNum).toLocaleString();
+    return `${{Number(blockNum).toLocaleString()}} (~${{fmtApproxUtc(ms)}})`;
+  }}
+
   function updateRangeText(a, b) {{
     rangeText.textContent = `Showing blocks ${{a.toLocaleString()}} - ${{b.toLocaleString()}} (${{(b - a + 1).toLocaleString()}} blocks)`;
+    if (!rangeDateText) return;
+    const msA = blockToApproxUnixMs(a);
+    const msB = blockToApproxUnixMs(b);
+    if (!Number.isFinite(msA) || !Number.isFinite(msB)) {{
+      rangeDateText.textContent = 'Approx UTC range unavailable (missing anchor timestamp).';
+      return;
+    }}
+    rangeDateText.textContent =
+      `Approx UTC: ${{fmtApproxUtc(msA)}} \u2192 ${{fmtApproxUtc(msB)}} (${{fmtApproxSpan(msA, msB)}})` +
+      `, using ~${{BLOCK_TIME_APPROX_SECONDS.toFixed(2)}}s/block (${{TIME_ANCHOR_SOURCE}})`;
+  }}
+
+  function markScoreStale(reason) {{
+    if (!scoreStatus) return;
+    const why = reason ? ` (${{reason}})` : '';
+    scoreStatus.textContent = `Score is stale${{why}}. Click "Score current range" to compute.`;
+  }}
+
+  function onSetCursor(u) {{
+    if (!hoverText) return;
+    const idx = u && u.cursor ? u.cursor.idx : null;
+    if (idx == null || idx < 0 || idx >= blocks.length) {{
+      hoverText.textContent = '';
+      return;
+    }}
+    const b = blocks[idx];
+    const ms = blockToApproxUnixMs(b);
+    if (!Number.isFinite(ms)) {{
+      hoverText.textContent = `Hover: block ${{b.toLocaleString()}}`;
+      return;
+    }}
+    hoverText.textContent = `Hover: block ${{b.toLocaleString()}} (~${{fmtApproxUtc(ms)}})`;
   }}
 
   function getCurrentXRange() {{
@@ -176,6 +463,192 @@ def build_app_js(blocks, base, blob):
   function parseNumber(inputEl, fallback) {{
     const v = Number(inputEl.value);
     return Number.isFinite(v) ? v : fallback;
+  }}
+
+  function parseWeight(inputEl, fallback) {{
+    const v = Number(inputEl.value);
+    return Number.isFinite(v) && v >= 0 ? v : fallback;
+  }}
+
+  function lowerBound(arr, x) {{
+    let lo = 0;
+    let hi = arr.length;
+    while (lo < hi) {{
+      const mid = (lo + hi) >> 1;
+      if (arr[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }}
+    return lo;
+  }}
+
+  function upperBound(arr, x) {{
+    let lo = 0;
+    let hi = arr.length;
+    while (lo < hi) {{
+      const mid = (lo + hi) >> 1;
+      if (arr[mid] <= x) lo = mid + 1;
+      else hi = mid;
+    }}
+    return lo;
+  }}
+
+  function percentile(values, p) {{
+    if (!values.length) return 0;
+    const s = values.slice().sort(function (a, b) {{ return a - b; }});
+    const k = (s.length - 1) * (p / 100);
+    const lo = Math.floor(k);
+    const hi = Math.ceil(k);
+    if (lo === hi) return s[lo];
+    const w = k - lo;
+    return s[lo] * (1 - w) + s[hi] * w;
+  }}
+
+  function normalizedWeightedSum(values, weights) {{
+    let sumW = 0;
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {{
+      const w = Math.max(0, weights[i] || 0);
+      sumW += w;
+      sum += w * values[i];
+    }}
+    return sumW > 0 ? (sum / sumW) : 0;
+  }}
+
+  function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {{
+    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return;
+    const i0 = lowerBound(blocks, minBlock);
+    const i1 = upperBound(blocks, maxBlock) - 1;
+    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return;
+
+    const n = i1 - i0 + 1;
+    if (n <= 0) return;
+
+    const deadbandPct = parsePositive(deficitDeadbandPctInput, {DEFAULT_DEFICIT_DEADBAND_PCT});
+    const deadbandEth = targetVaultEth * (deadbandPct / 100);
+    const feeScale = maxFeeGwei > 0 ? maxFeeGwei : 1;
+
+    let maxDrawdownEth = 0;
+    let underCount = 0;
+    let deficitAreaBand = 0;
+    let worstStreak = 0;
+    let curStreak = 0;
+    let clampMaxCount = 0;
+
+    let feeSum = 0;
+    let feeSqSum = 0;
+    const feeSteps = [];
+    let maxStep = 0;
+
+    for (let i = i0; i <= i1; i++) {{
+      const target = derivedVaultTargetEth[i];
+      const vault = derivedVaultEth[i];
+      const gap = vault - target;
+      const deficitEth = target - vault;
+
+      if (gap < 0) {{
+        underCount += 1;
+        curStreak += 1;
+        if (curStreak > worstStreak) worstStreak = curStreak;
+      }} else {{
+        curStreak = 0;
+      }}
+
+      maxDrawdownEth = Math.max(maxDrawdownEth, Math.max(0, -gap));
+      deficitAreaBand += Math.max(0, deficitEth - deadbandEth);
+
+      if (derivedClampState[i] === 'max') clampMaxCount += 1;
+
+      const fee = derivedChargedFeeGwei[i];
+      feeSum += fee;
+      feeSqSum += fee * fee;
+      if (i > i0) {{
+        const step = Math.abs(fee - derivedChargedFeeGwei[i - 1]);
+        feeSteps.push(step);
+        if (step > maxStep) maxStep = step;
+      }}
+    }}
+
+    const feeMean = feeSum / n;
+    const feeVar = Math.max(0, (feeSqSum / n) - feeMean * feeMean);
+    const feeStd = Math.sqrt(feeVar);
+    const stepP95 = percentile(feeSteps, 95);
+    const stepP99 = percentile(feeSteps, 99);
+    const clampMaxRatio = clampMaxCount / n;
+    const underTargetRatio = underCount / n;
+
+    const finalGapEth = derivedVaultEth[i1] - derivedVaultTargetEth[i1];
+    const absFinalGapEth = Math.abs(finalGapEth);
+
+    const dDraw = targetVaultEth > 0 ? (maxDrawdownEth / targetVaultEth) : 0;
+    const dUnder = underTargetRatio;
+    const dArea = targetVaultEth > 0 ? (deficitAreaBand / (targetVaultEth * n)) : 0;
+    const dGap = targetVaultEth > 0 ? (absFinalGapEth / targetVaultEth) : 0;
+    const dStreak = worstStreak / n;
+
+    const uStd = feeStd / feeScale;
+    const uP95 = stepP95 / feeScale;
+    const uP99 = stepP99 / feeScale;
+    const uMax = maxStep / feeScale;
+    const uClamp = clampMaxRatio;
+
+    const wDraw = parseWeight(healthWDrawInput, {DEFAULT_HEALTH_W_DRAW});
+    const wUnder = parseWeight(healthWUnderInput, {DEFAULT_HEALTH_W_UNDER});
+    const wArea = parseWeight(healthWAreaInput, {DEFAULT_HEALTH_W_AREA});
+    const wGap = parseWeight(healthWGapInput, {DEFAULT_HEALTH_W_GAP});
+    const wStreak = parseWeight(healthWStreakInput, {DEFAULT_HEALTH_W_STREAK});
+
+    const wStd = parseWeight(uxWStdInput, {DEFAULT_UX_W_STD});
+    const wP95 = parseWeight(uxWP95Input, {DEFAULT_UX_W_P95});
+    const wP99 = parseWeight(uxWP99Input, {DEFAULT_UX_W_P99});
+    const wMax = parseWeight(uxWMaxStepInput, {DEFAULT_UX_W_MAXSTEP});
+    const wClamp = parseWeight(uxWClampInput, {DEFAULT_UX_W_CLAMP});
+
+    const wHealth = parseWeight(scoreWeightHealthInput, {DEFAULT_HEALTH_WEIGHT});
+    const wUx = parseWeight(scoreWeightUxInput, {DEFAULT_UX_WEIGHT});
+
+    const healthBadness = normalizedWeightedSum(
+      [dDraw, dUnder, dArea, dGap, dStreak],
+      [wDraw, wUnder, wArea, wGap, wStreak]
+    );
+    const uxBadness = normalizedWeightedSum(
+      [uStd, uP95, uP99, uMax, uClamp],
+      [wStd, wP95, wP99, wMax, wClamp]
+    );
+    const totalBadness = normalizedWeightedSum([healthBadness, uxBadness], [wHealth, wUx]);
+
+    scoreHealthBadness.textContent = formatNum(healthBadness, 6);
+    scoreUxBadness.textContent = formatNum(uxBadness, 6);
+    scoreTotalBadness.textContent = formatNum(totalBadness, 6);
+    scoreWeightSummary.textContent =
+      `overall weights: health=${{formatNum(wHealth, 3)}}, ux=${{formatNum(wUx, 3)}}`;
+
+    healthMaxDrawdown.textContent = `${{formatNum(maxDrawdownEth, 6)}} ETH`;
+    healthUnderTargetRatio.textContent = `${{formatNum(underTargetRatio, 4)}}`;
+    healthAbsFinalGap.textContent = `${{formatNum(absFinalGapEth, 6)}} ETH`;
+    healthDeficitAreaBand.textContent = `${{formatNum(deficitAreaBand, 6)}} ETH*block`;
+    healthWorstDeficitStreak.textContent = `${{formatNum(worstStreak, 0)}} blocks`;
+
+    uxFeeStd.textContent = `${{formatNum(feeStd, 6)}} gwei/L2gas`;
+    uxFeeStepP95.textContent = `${{formatNum(stepP95, 6)}} gwei/L2gas`;
+    uxFeeStepP99.textContent = `${{formatNum(stepP99, 6)}} gwei/L2gas`;
+    uxFeeStepMax.textContent = `${{formatNum(maxStep, 6)}} gwei/L2gas`;
+    uxClampMaxRatio.textContent = `${{formatNum(clampMaxRatio, 4)}}`;
+
+    healthFormulaLine.textContent =
+      `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wGap*dGap + wStreak*dStreak ` +
+      `(dDraw=${{formatNum(dDraw, 4)}}, dUnder=${{formatNum(dUnder, 4)}}, dArea=${{formatNum(dArea, 4)}}, dGap=${{formatNum(dGap, 4)}}, dStreak=${{formatNum(dStreak, 4)}})`;
+    uxFormulaLine.textContent =
+      `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp ` +
+      `(uStd=${{formatNum(uStd, 4)}}, uP95=${{formatNum(uP95, 4)}}, uP99=${{formatNum(uP99, 4)}}, uMax=${{formatNum(uMax, 4)}}, uClamp=${{formatNum(uClamp, 4)}})`;
+    totalFormulaLine.textContent =
+      `total_badness = wHealth*health_badness + wUx*ux_badness = ${{formatNum(totalBadness, 6)}} ` +
+      `(deadband=${{formatNum(deadbandPct, 2)}}%, blocks=${{n.toLocaleString()}})`;
+
+    if (scoreStatus) {{
+      scoreStatus.textContent =
+        `Scored blocks ${{blocks[i0].toLocaleString()}}-${{blocks[i1].toLocaleString()}} ` +
+        `(${{n.toLocaleString()}} blocks).`;
+    }}
   }}
 
   function applyControllerModePreset(mode) {{
@@ -519,6 +992,7 @@ def build_app_js(blocks, base, blob):
     latestClampState.textContent = derivedClampState[lastIdx];
     latestVaultValue.textContent = `${{formatNum(derivedVaultEth[lastIdx], 6)}} ETH`;
     latestVaultGap.textContent = `${{formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)}} ETH`;
+    markScoreStale('recomputed charts');
   }}
 
   minInput.value = MIN_BLOCK;
@@ -568,7 +1042,7 @@ def build_app_js(blocks, base, blob):
       height,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: title, stroke: strokeColor, width: 1 }}
       ],
       axes: [
@@ -579,7 +1053,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }};
   }}
@@ -591,7 +1066,7 @@ def build_app_js(blocks, base, blob):
       height,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'Gas cost (ETH)', stroke: '#2563eb', width: 1 }},
         {{ label: 'Blob cost (ETH)', stroke: '#ea580c', width: 1 }},
         {{ label: 'Total cost (ETH)', stroke: '#7c3aed', width: 1.4 }}
@@ -604,7 +1079,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }};
   }}
@@ -616,7 +1092,7 @@ def build_app_js(blocks, base, blob):
       height,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'Gas component fee (gwei/L2 gas)', stroke: '#2563eb', width: 1 }},
         {{ label: 'Blob component fee (gwei/L2 gas)', stroke: '#ea580c', width: 1 }},
         {{ label: 'Charged fee (clamped total)', stroke: '#16a34a', width: 1.4 }}
@@ -629,7 +1105,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }};
   }}
@@ -641,7 +1118,7 @@ def build_app_js(blocks, base, blob):
       height,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'Target vault (ETH)', stroke: '#dc2626', width: 1 }},
         {{ label: 'Current vault (ETH)', stroke: '#0f766e', width: 1.4 }}
       ],
@@ -653,7 +1130,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }};
   }}
@@ -665,7 +1143,7 @@ def build_app_js(blocks, base, blob):
       height,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'FF term (gwei/L2 gas)', stroke: '#334155', width: 1.2 }},
         {{ label: 'P term (gwei/L2 gas)', stroke: '#2563eb', width: 1.0 }},
         {{ label: 'I term (gwei/L2 gas)', stroke: '#f59e0b', width: 1.0 }},
@@ -680,7 +1158,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }};
   }}
@@ -692,7 +1171,7 @@ def build_app_js(blocks, base, blob):
       height,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'Deficit D (ETH)', stroke: '#dc2626', width: 1.2 }},
         {{ label: 'Normalized deficit epsilon', stroke: '#0891b2', width: 1.0 }},
         {{ label: 'Integral I', stroke: '#7c2d12', width: 1.0 }}
@@ -705,7 +1184,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }};
   }}
@@ -721,6 +1201,7 @@ def build_app_js(blocks, base, blob):
       if (p !== sourcePlot) p.setScale('x', {{ min: minB, max: maxB }});
     }}
     syncing = false;
+    markScoreStale('range changed');
   }}
 
   function resizePlots() {{
@@ -751,7 +1232,7 @@ def build_app_js(blocks, base, blob):
       height: 320,
       scales: {{ x: {{ time: false }} }},
       series: [
-        {{}},
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
         {{ label: 'L2 gas / L2 block (scenario)', stroke: '#0f766e', width: 1.4 }},
         {{ label: 'L2 gas / L2 block (target)', stroke: '#94a3b8', width: 1.0 }}
       ],
@@ -763,7 +1244,8 @@ def build_app_js(blocks, base, blob):
         drag: {{ x: true, y: false, setScale: true }}
       }},
       hooks: {{
-        setScale: [onSetScale]
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
       }}
     }},
     [blocks, [], []],
@@ -821,6 +1303,21 @@ def build_app_js(blocks, base, blob):
 
   document.getElementById('recalcBtn').addEventListener('click', recalcDerivedSeries);
 
+  if (scoreBtn) {{
+    scoreBtn.addEventListener('click', function () {{
+      if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
+      window.setTimeout(function () {{
+        const [minB, maxB] = clampRange(minInput.value, maxInput.value);
+        updateScorecard(
+          minB,
+          maxB,
+          parsePositive(maxFeeGweiInput, {DEFAULT_MAX_FEE_GWEI}),
+          parsePositive(targetVaultEthInput, {DEFAULT_TARGET_VAULT_ETH})
+        );
+      }}, 0);
+    }});
+  }}
+
   controllerModeInput.addEventListener('change', function () {{
     applyControllerModePreset(controllerModeInput.value || 'alpha-only');
     recalcDerivedSeries();
@@ -863,12 +1360,38 @@ def build_app_js(blocks, base, blob):
     el.addEventListener('change', recalcDerivedSeries);
   }});
 
+  [
+    deficitDeadbandPctInput,
+    scoreWeightHealthInput,
+    scoreWeightUxInput,
+    healthWDrawInput,
+    healthWUnderInput,
+    healthWAreaInput,
+    healthWGapInput,
+    healthWStreakInput,
+    uxWStdInput,
+    uxWP95Input,
+    uxWP99Input,
+    uxWMaxStepInput,
+    uxWClampInput
+  ].forEach(function (el) {{
+    el.addEventListener('keydown', function (e) {{
+      if (e.key === 'Enter') {{
+        markScoreStale('score settings changed');
+      }}
+    }});
+    el.addEventListener('change', function () {{
+      markScoreStale('score settings changed');
+    }});
+  }});
+
   let resizeTimer;
   window.addEventListener('resize', function () {{
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(resizePlots, 120);
   }});
 
+  markScoreStale('not computed yet');
   setStatus('');
 }})();
 """
@@ -955,11 +1478,39 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
     input[type=number], select {{ width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }}
     button {{ border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }}
     button.primary {{ border-color: transparent; background: var(--accent); color: #fff; }}
-    .range-text {{ margin-left: auto; font-size: 12px; color: var(--muted); }}
+    .range-text {{ font-size: 12px; color: var(--muted); }}
+    .range-main {{ margin-left: auto; }}
+    .range-sub {{ font-size: 12px; color: var(--muted); }}
     .status {{ margin: 4px 0 0; min-height: 18px; font-size: 12px; color: #b45309; }}
     .metrics {{ display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin: 6px 0; }}
     .plot {{ width: 100%; min-height: 336px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }}
-    .formula {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; }}
+    .formula {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; word-break: break-word; }}
+    .score-kpis {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 8px 0;
+    }}
+    .score-kpi {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }}
+    .score-kpi-label {{ font-size: 11px; color: var(--muted); }}
+    .score-kpi-value {{ font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 4px; line-height: 1.1; }}
+    .score-status {{
+      margin: 6px 0;
+      font-size: 12px;
+      color: #475569;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }}
+    .score-subtitle {{
+      font-size: 12px;
+      color: #334155;
+      margin: 8px 0 4px;
+      font-weight: 600;
+    }}
   </style>
 </head>
 <body>
@@ -977,7 +1528,9 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           <button id=\"resetBtn\">Reset full range</button>
           <button id=\"tail20kBtn\">Last 20k blocks</button>
           <button id=\"tail5kBtn\">Last 5k blocks</button>
-          <span class=\"range-text\" id=\"rangeText\"></span>
+          <span class=\"range-text range-main\" id=\"rangeText\"></span>
+          <span class=\"range-sub\" id=\"rangeDateText\"></span>
+          <span class=\"range-sub\" id=\"hoverText\"></span>
         </div>
 
         <div class=\"assumptions\">
@@ -1054,6 +1607,57 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           </div>
         </div>
 
+        <div class=\"assumptions score-card\">
+          <div class=\"assumptions-title\">Health / UX Scoring</div>
+          <div class=\"controls\">
+            <label>Deficit deadband (%) <input id=\"deficitDeadbandPct\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_DEFICIT_DEADBAND_PCT:g}\" /></label>
+            <label>Overall health weight <input id=\"scoreWeightHealth\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_WEIGHT:g}\" /></label>
+            <label>Overall UX weight <input id=\"scoreWeightUx\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_WEIGHT:g}\" /></label>
+            <button class=\"primary\" id=\"scoreBtn\">Score current range</button>
+          </div>
+          <div class=\"score-status\" id=\"scoreStatus\">Score is stale. Click \"Score current range\" to compute.</div>
+          <div class=\"score-kpis\">
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">TOTAL BADNESS</div><div class=\"score-kpi-value\" id=\"scoreTotalBadness\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">HEALTH BADNESS</div><div class=\"score-kpi-value\" id=\"scoreHealthBadness\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">UX BADNESS</div><div class=\"score-kpi-value\" id=\"scoreUxBadness\">-</div></div>
+          </div>
+          <div class=\"score-subtitle\">Important Health Metrics</div>
+          <div class=\"score-kpis\">
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Max drawdown</div><div class=\"score-kpi-value\" id=\"healthMaxDrawdown\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Under-target ratio</div><div class=\"score-kpi-value\" id=\"healthUnderTargetRatio\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Abs final gap</div><div class=\"score-kpi-value\" id=\"healthAbsFinalGap\">-</div></div>
+          </div>
+          <div class=\"score-subtitle\">Important UX Metrics</div>
+          <div class=\"score-kpis\">
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Fee std</div><div class=\"score-kpi-value\" id=\"uxFeeStd\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Fee step p95</div><div class=\"score-kpi-value\" id=\"uxFeeStepP95\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Clamp-max ratio</div><div class=\"score-kpi-value\" id=\"uxClampMaxRatio\">-</div></div>
+          </div>
+          <div class=\"assumptions-title\">Score Weights (Detailed)</div>
+          <div class=\"controls\">
+            <label>Health w_draw <input id=\"healthWDraw\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_DRAW:g}\" /></label>
+            <label>Health w_under <input id=\"healthWUnder\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_UNDER:g}\" /></label>
+            <label>Health w_area <input id=\"healthWArea\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_AREA:g}\" /></label>
+            <label>Health w_gap <input id=\"healthWGap\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_GAP:g}\" /></label>
+            <label>Health w_streak <input id=\"healthWStreak\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_STREAK:g}\" /></label>
+            <label>UX w_std <input id=\"uxWStd\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_STD:g}\" /></label>
+            <label>UX w_p95 <input id=\"uxWP95\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_P95:g}\" /></label>
+            <label>UX w_p99 <input id=\"uxWP99\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_P99:g}\" /></label>
+            <label>UX w_maxStep <input id=\"uxWMaxStep\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_MAXSTEP:g}\" /></label>
+            <label>UX w_clamp <input id=\"uxWClamp\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_CLAMP:g}\" /></label>
+          </div>
+          <div class=\"formula\" id=\"scoreWeightSummary\">overall weights: -</div>
+          <div class=\"formula\" id=\"healthFormulaLine\">health_badness = -</div>
+          <div class=\"formula\" id=\"uxFormulaLine\">ux_badness = -</div>
+          <div class=\"formula\" id=\"totalFormulaLine\">total_badness = -</div>
+          <div class=\"metrics\">
+            <span>Health deficit area (banded): <strong id=\"healthDeficitAreaBand\">-</strong></span>
+            <span>Health worst deficit streak: <strong id=\"healthWorstDeficitStreak\">-</strong></span>
+            <span>UX fee step p99: <strong id=\"uxFeeStepP99\">-</strong></span>
+            <span>UX fee step max: <strong id=\"uxFeeStepMax\">-</strong></span>
+          </div>
+        </div>
+
         <div class=\"status\" id=\"status\"></div>
       </aside>
 
@@ -1094,6 +1698,21 @@ def main():
     parser.add_argument("--out-js", required=True, help="Output JS path")
     parser.add_argument("--title", default="Ethereum + L2 Posting Cost Explorer", help="Page title")
     parser.add_argument(
+        "--rpc",
+        default="https://ethereum-rpc.publicnode.com",
+        help="Optional RPC endpoint used to fill missing anchor timestamps",
+    )
+    parser.add_argument(
+        "--timestamp-cache",
+        default=str(DEFAULT_TIMESTAMP_CACHE),
+        help="Persistent JSON cache for block timestamp lookups",
+    )
+    parser.add_argument(
+        "--no-rpc-anchor",
+        action="store_true",
+        help="Disable RPC calls for anchor timestamps; use summary/cache only",
+    )
+    parser.add_argument(
         "--range-option",
         action="append",
         default=[],
@@ -1106,11 +1725,16 @@ def main():
     out_js = Path(args.out_js).resolve()
 
     blocks, base, blob = read_fee_csv(csv_path)
+    cache_path = Path(args.timestamp_cache).resolve() if args.timestamp_cache else None
+    ts_cache = load_timestamp_cache(cache_path)
+    rpc_url = None if args.no_rpc_anchor else args.rpc
+    time_anchor = read_time_anchor(csv_path, blocks[0], blocks[-1], rpc_url, ts_cache)
+    save_timestamp_cache(cache_path, ts_cache)
 
     out_html.parent.mkdir(parents=True, exist_ok=True)
     out_js.parent.mkdir(parents=True, exist_ok=True)
 
-    out_js.write_text(build_app_js(blocks, base, blob))
+    out_js.write_text(build_app_js(blocks, base, blob, time_anchor))
     range_options = []
     for opt in args.range_option:
         if "|" in opt:

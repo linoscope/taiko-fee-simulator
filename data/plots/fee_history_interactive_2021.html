@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ethereum + L2 Posting Cost Explorer</title>
+  <title>Ethereum L1 Fee History (Year 2021)</title>
   <link rel="stylesheet" href="./uPlot.min.css" />
   <style>
     :root {
@@ -59,16 +59,44 @@
     input[type=number], select { width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
     button { border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
     button.primary { border-color: transparent; background: var(--accent); color: #fff; }
-    .range-text { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .range-text { font-size: 12px; color: var(--muted); }
+    .range-main { margin-left: auto; }
+    .range-sub { font-size: 12px; color: var(--muted); }
     .status { margin: 4px 0 0; min-height: 18px; font-size: 12px; color: #b45309; }
     .metrics { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin: 6px 0; }
     .plot { width: 100%; min-height: 336px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }
-    .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; }
+    .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; word-break: break-word; }
+    .score-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .score-kpi {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }
+    .score-kpi-label { font-size: 11px; color: var(--muted); }
+    .score-kpi-value { font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 4px; line-height: 1.1; }
+    .score-status {
+      margin: 6px 0;
+      font-size: 12px;
+      color: #475569;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .score-subtitle {
+      font-size: 12px;
+      color: #334155;
+      margin: 8px 0 4px;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Ethereum + L2 Posting Cost Explorer</h1>
+    <h1>Ethereum L1 Fee History (Year 2021)</h1>
     <p class="sub">Drag horizontally inside any chart to zoom. Block range controls and zoom are synchronized across all charts.</p>
 
     <div class="layout">
@@ -91,7 +119,9 @@
           <button id="resetBtn">Reset full range</button>
           <button id="tail20kBtn">Last 20k blocks</button>
           <button id="tail5kBtn">Last 5k blocks</button>
-          <span class="range-text" id="rangeText"></span>
+          <span class="range-text range-main" id="rangeText"></span>
+          <span class="range-sub" id="rangeDateText"></span>
+          <span class="range-sub" id="hoverText"></span>
         </div>
 
         <div class="assumptions">
@@ -165,6 +195,57 @@
             <span>Latest L2 gas used: <strong id="latestL2GasUsed">-</strong></span>
             <span>Latest vault value: <strong id="latestVaultValue">-</strong></span>
             <span>Vault - target: <strong id="latestVaultGap">-</strong></span>
+          </div>
+        </div>
+
+        <div class="assumptions score-card">
+          <div class="assumptions-title">Health / UX Scoring</div>
+          <div class="controls">
+            <label>Deficit deadband (%) <input id="deficitDeadbandPct" type="number" min="0" step="0.1" value="5" /></label>
+            <label>Overall health weight <input id="scoreWeightHealth" type="number" min="0" step="0.01" value="0.75" /></label>
+            <label>Overall UX weight <input id="scoreWeightUx" type="number" min="0" step="0.01" value="0.25" /></label>
+            <button class="primary" id="scoreBtn">Score current range</button>
+          </div>
+          <div class="score-status" id="scoreStatus">Score is stale. Click "Score current range" to compute.</div>
+          <div class="score-kpis">
+            <div class="score-kpi"><div class="score-kpi-label">TOTAL BADNESS</div><div class="score-kpi-value" id="scoreTotalBadness">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">HEALTH BADNESS</div><div class="score-kpi-value" id="scoreHealthBadness">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">UX BADNESS</div><div class="score-kpi-value" id="scoreUxBadness">-</div></div>
+          </div>
+          <div class="score-subtitle">Important Health Metrics</div>
+          <div class="score-kpis">
+            <div class="score-kpi"><div class="score-kpi-label">Max drawdown</div><div class="score-kpi-value" id="healthMaxDrawdown">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">Under-target ratio</div><div class="score-kpi-value" id="healthUnderTargetRatio">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">Abs final gap</div><div class="score-kpi-value" id="healthAbsFinalGap">-</div></div>
+          </div>
+          <div class="score-subtitle">Important UX Metrics</div>
+          <div class="score-kpis">
+            <div class="score-kpi"><div class="score-kpi-label">Fee std</div><div class="score-kpi-value" id="uxFeeStd">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">Fee step p95</div><div class="score-kpi-value" id="uxFeeStepP95">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">Clamp-max ratio</div><div class="score-kpi-value" id="uxClampMaxRatio">-</div></div>
+          </div>
+          <div class="assumptions-title">Score Weights (Detailed)</div>
+          <div class="controls">
+            <label>Health w_draw <input id="healthWDraw" type="number" min="0" step="0.01" value="0.35" /></label>
+            <label>Health w_under <input id="healthWUnder" type="number" min="0" step="0.01" value="0.25" /></label>
+            <label>Health w_area <input id="healthWArea" type="number" min="0" step="0.01" value="0.2" /></label>
+            <label>Health w_gap <input id="healthWGap" type="number" min="0" step="0.01" value="0.1" /></label>
+            <label>Health w_streak <input id="healthWStreak" type="number" min="0" step="0.01" value="0.1" /></label>
+            <label>UX w_std <input id="uxWStd" type="number" min="0" step="0.01" value="0.3" /></label>
+            <label>UX w_p95 <input id="uxWP95" type="number" min="0" step="0.01" value="0.3" /></label>
+            <label>UX w_p99 <input id="uxWP99" type="number" min="0" step="0.01" value="0.2" /></label>
+            <label>UX w_maxStep <input id="uxWMaxStep" type="number" min="0" step="0.01" value="0.1" /></label>
+            <label>UX w_clamp <input id="uxWClamp" type="number" min="0" step="0.01" value="0.1" /></label>
+          </div>
+          <div class="formula" id="scoreWeightSummary">overall weights: -</div>
+          <div class="formula" id="healthFormulaLine">health_badness = -</div>
+          <div class="formula" id="uxFormulaLine">ux_badness = -</div>
+          <div class="formula" id="totalFormulaLine">total_badness = -</div>
+          <div class="metrics">
+            <span>Health deficit area (banded): <strong id="healthDeficitAreaBand">-</strong></span>
+            <span>Health worst deficit streak: <strong id="healthWorstDeficitStreak">-</strong></span>
+            <span>UX fee step p99: <strong id="uxFeeStepP99">-</strong></span>
+            <span>UX fee step max: <strong id="uxFeeStepMax">-</strong></span>
           </div>
         </div>
 
