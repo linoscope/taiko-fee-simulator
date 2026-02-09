@@ -27,10 +27,10 @@ DEFAULT_D_FB_BLOCKS = 5
 DEFAULT_KP = 0.1
 DEFAULT_KI = 0.0
 DEFAULT_KD = 0.0
-DEFAULT_P_TERM_MIN_GWEI = -1.0
+DEFAULT_P_TERM_MIN_GWEI = 0.0
 DEFAULT_DERIV_BETA = 0.8
-DEFAULT_I_MIN = -5.0
-DEFAULT_I_MAX = 5.0
+DEFAULT_I_MIN = 0.0
+DEFAULT_I_MAX = 10.0
 DEFAULT_DEFICIT_DEADBAND_PCT = 5.0
 
 DEFAULT_HEALTH_WEIGHT = 0.75
@@ -271,6 +271,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
   const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
   const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
+  const SWEEP_ALPHA_VARIANTS = Object.freeze(['current', 'zero']);
   const SWEEP_KP_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KP_VALUES)});
   const SWEEP_KI_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KI_VALUES)});
   const SWEEP_KD_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KD_VALUES)});
@@ -368,6 +369,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const sweepStatus = document.getElementById('sweepStatus');
   const sweepSpinner = document.getElementById('sweepSpinner');
   const sweepBestMode = document.getElementById('sweepBestMode');
+  const sweepBestAlphaVariant = document.getElementById('sweepBestAlphaVariant');
   const sweepBestKp = document.getElementById('sweepBestKp');
   const sweepBestKi = document.getElementById('sweepBestKi');
   const sweepBestKd = document.getElementById('sweepBestKd');
@@ -383,6 +385,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const blobWrap = document.getElementById('blobPlot');
   const costWrap = document.getElementById('costPlot');
   const reqWrap = document.getElementById('requiredFeePlot');
+  const chargedOnlyWrap = document.getElementById('chargedFeeOnlyPlot');
   const controllerWrap = document.getElementById('controllerPlot');
   const feedbackWrap = document.getElementById('feedbackPlot');
   const vaultWrap = document.getElementById('vaultPlot');
@@ -892,6 +895,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     sweepCurrentPoint = null;
     sweepPoints = [];
     if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
+    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
     const why = reason ? ` (${{reason}})` : '';
     setSweepStatus(`Sweep stale${{why}}. Run parameter sweep to refresh.`);
     setSweepHoverText('Hover point: -');
@@ -930,12 +934,15 @@ def build_app_js(blocks, base, blob, time_anchor):
       for (const kp of SWEEP_KP_VALUES) {{
         for (const ki of SWEEP_KI_VALUES) {{
           for (const kd of SWEEP_KD_VALUES) {{
-            out.push({{
-              mode,
-              kp,
-              ki,
-              kd
-            }});
+            for (const alphaVariant of SWEEP_ALPHA_VARIANTS) {{
+              out.push({{
+                mode,
+                alphaVariant,
+                kp,
+                ki,
+                kd
+              }});
+            }}
           }}
         }}
       }}
@@ -1132,7 +1139,7 @@ def build_app_js(blocks, base, blob, time_anchor):
 
     const preservedRange = getCurrentXRange();
 
-    if (l2GasPlot && costPlot && requiredFeePlot && controllerPlot && feedbackPlot && vaultPlot) {{
+    if (l2GasPlot && costPlot && requiredFeePlot && chargedFeeOnlyPlot && controllerPlot && feedbackPlot && vaultPlot) {{
       l2GasPlot.setData([blocks, derivedL2GasPerL2Block, derivedL2GasPerL2BlockBase]);
       costPlot.setData([blocks, derivedGasCostEth, derivedBlobCostEth, derivedPostingCostEth]);
       requiredFeePlot.setData([
@@ -1141,6 +1148,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         derivedBlobFeeComponentGwei,
         derivedChargedFeeGwei
       ]);
+      chargedFeeOnlyPlot.setData([blocks, derivedChargedFeeGwei]);
       controllerPlot.setData([
         blocks,
         derivedFeedforwardFeeGwei,
@@ -1217,7 +1225,15 @@ def build_app_js(blocks, base, blob, time_anchor):
         sweepCurrentPoint = evaluateSweepCandidate(
           sweepRange.i0,
           sweepRange.i1,
-          {{ mode: controllerMode, kp, ki, kd }},
+          {{
+            mode: controllerMode,
+            alphaVariant: 'current',
+            alphaGas,
+            alphaBlob,
+            kp,
+            ki,
+            kd
+          }},
           sweepSimCfg,
           sweepScoreCfg
         );
@@ -1231,6 +1247,13 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   function evaluateSweepCandidate(i0, i1, candidate, simCfg, scoreCfg) {{
     const modeFlags = getModeFlags(candidate.mode);
+    const candidateAlphaGas = Number.isFinite(candidate.alphaGas)
+      ? Math.max(0, candidate.alphaGas)
+      : Math.max(0, simCfg.alphaGas);
+    const candidateAlphaBlob = Number.isFinite(candidate.alphaBlob)
+      ? Math.max(0, candidate.alphaBlob)
+      : Math.max(0, simCfg.alphaBlob);
+    const candidateAlphaVariant = candidate.alphaVariant || 'current';
     const n = i1 - i0 + 1;
     const targetDenom = simCfg.targetVaultEth > 0 ? simCfg.targetVaultEth : 1;
     const feeDenom = simCfg.maxFeeGwei > 0 ? simCfg.maxFeeGwei : 1;
@@ -1281,8 +1304,8 @@ def build_app_js(blocks, base, blob, time_anchor):
 
       const feedforwardWei = modeFlags.usesFeedforward
         ? (
-            simCfg.alphaGas * (baseFeeFfWei + simCfg.priorityFeeWei) +
-            simCfg.alphaBlob * blobBaseFeeFfWei
+            candidateAlphaGas * (baseFeeFfWei + simCfg.priorityFeeWei) +
+            candidateAlphaBlob * blobBaseFeeFfWei
           )
         : 0;
       const pTermWeiRaw = modeFlags.usesP ? (candidate.kp * epsilon * simCfg.feeRangeWei) : 0;
@@ -1371,6 +1394,9 @@ def build_app_js(blocks, base, blob, time_anchor):
 
     return {{
       mode: candidate.mode,
+      alphaVariant: candidateAlphaVariant,
+      alphaGas: candidateAlphaGas,
+      alphaBlob: candidateAlphaBlob,
       kp: candidate.kp,
       ki: candidate.ki,
       kd: candidate.kd,
@@ -1397,6 +1423,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       const isBest = Boolean(
         best &&
         r.mode === best.mode &&
+        r.alphaVariant === best.alphaVariant &&
         r.kp === best.kp &&
         r.ki === best.ki &&
         r.kd === best.kd
@@ -1406,6 +1433,9 @@ def build_app_js(blocks, base, blob, time_anchor):
         health: r.healthBadness,
         total: r.totalBadness,
         mode: r.mode,
+        alphaVariant: r.alphaVariant || 'current',
+        alphaGas: r.alphaGas,
+        alphaBlob: r.alphaBlob,
         kp: r.kp,
         ki: r.ki,
         kd: r.kd,
@@ -1423,6 +1453,9 @@ def build_app_js(blocks, base, blob, time_anchor):
         health: currentPoint.healthBadness,
         total: currentPoint.totalBadness,
         mode: currentPoint.mode,
+        alphaVariant: currentPoint.alphaVariant || 'current',
+        alphaGas: currentPoint.alphaGas,
+        alphaBlob: currentPoint.alphaBlob,
         kp: currentPoint.kp,
         ki: currentPoint.ki,
         kd: currentPoint.kd,
@@ -1489,7 +1522,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     if (p.isCurrent) tagParts.push('current');
     const tagText = tagParts.length ? ` (${{tagParts.join(', ')}})` : '';
     setSweepHoverText(
-      `Hover point ${{rankPart}}${{tagText}}: mode=${{p.mode}}, ` +
+      `Hover point ${{rankPart}}${{tagText}}: mode=${{p.mode}}, alpha=${{p.alphaVariant}}, ` +
       `Kp=${{formatNum(p.kp, 4)}}, Ki=${{formatNum(p.ki, 4)}}, Kd=${{formatNum(p.kd, 4)}}, ` +
       `health=${{formatNum(p.health, 6)}}, UX=${{formatNum(p.ux, 6)}}, total=${{formatNum(p.total, 6)}}`
     );
@@ -1576,7 +1609,23 @@ def build_app_js(blocks, base, blob, time_anchor):
     setSweepHoverText('Hover point: -');
     for (let idx = 0; idx < candidates.length; idx++) {{
       if (sweepCancelRequested || runId !== sweepRunSeq) break;
-      const result = evaluateSweepCandidate(range.i0, range.i1, candidates[idx], simCfg, scoreCfg);
+      const cand = candidates[idx];
+      const useZeroAlpha = cand.alphaVariant === 'zero';
+      const result = evaluateSweepCandidate(
+        range.i0,
+        range.i1,
+        {{
+          mode: cand.mode,
+          alphaVariant: cand.alphaVariant,
+          alphaGas: useZeroAlpha ? 0 : alphaGasFixed,
+          alphaBlob: useZeroAlpha ? 0 : alphaBlobFixed,
+          kp: cand.kp,
+          ki: cand.ki,
+          kd: cand.kd
+        }},
+        simCfg,
+        scoreCfg
+      );
       results.push(result);
 
       if ((idx + 1) % 5 === 0 || idx + 1 === candidates.length) {{
@@ -1609,6 +1658,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     sweepBestCandidate = results[0];
     if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = false;
     if (sweepBestMode) sweepBestMode.textContent = sweepBestCandidate.mode;
+    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = sweepBestCandidate.alphaVariant || 'current';
     if (sweepBestKp) sweepBestKp.textContent = formatNum(sweepBestCandidate.kp, 4);
     if (sweepBestKi) sweepBestKi.textContent = formatNum(sweepBestCandidate.ki, 4);
     if (sweepBestKd) sweepBestKd.textContent = formatNum(sweepBestCandidate.kd, 4);
@@ -1633,6 +1683,15 @@ def build_app_js(blocks, base, blob, time_anchor):
     if (!sweepBestCandidate) return;
     controllerModeInput.value = sweepBestCandidate.mode;
     applyControllerModePreset(sweepBestCandidate.mode);
+    if (sweepBestCandidate.alphaVariant === 'zero') {{
+      autoAlphaInput.checked = false;
+      alphaGasInput.value = '0';
+      alphaBlobInput.value = '0';
+    }} else if (Number.isFinite(sweepBestCandidate.alphaGas) && Number.isFinite(sweepBestCandidate.alphaBlob)) {{
+      autoAlphaInput.checked = false;
+      alphaGasInput.value = `${{sweepBestCandidate.alphaGas}}`;
+      alphaBlobInput.value = `${{sweepBestCandidate.alphaBlob}}`;
+    }}
     kpInput.value = `${{sweepBestCandidate.kp}}`;
     kiInput.value = `${{sweepBestCandidate.ki}}`;
     kdInput.value = `${{sweepBestCandidate.kd}}`;
@@ -1656,6 +1715,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   let l2GasPlot;
   let costPlot;
   let requiredFeePlot;
+  let chargedFeeOnlyPlot;
   let controllerPlot;
   let feedbackPlot;
   let vaultPlot;
@@ -1667,6 +1727,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       l2GasPlot,
       costPlot,
       requiredFeePlot,
+      chargedFeeOnlyPlot,
       controllerPlot,
       feedbackPlot,
       vaultPlot
@@ -1756,6 +1817,30 @@ def build_app_js(blocks, base, blob, time_anchor):
         {{ label: 'Gas component fee (gwei/L2 gas)', stroke: '#2563eb', width: 1 }},
         {{ label: 'Blob component fee (gwei/L2 gas)', stroke: '#ea580c', width: 1 }},
         {{ label: 'Charged fee (clamped total)', stroke: '#16a34a', width: 1.4 }}
+      ],
+      axes: [
+        {{ label: 'L1 Block Number' }},
+        {{ label: 'gwei / L2 gas' }}
+      ],
+      cursor: {{
+        drag: {{ x: true, y: false, setScale: true }}
+      }},
+      hooks: {{
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
+      }}
+    }};
+  }}
+
+  function makeChargedFeeOnlyOpts(width, height) {{
+    return {{
+      title: 'L2 Charged Fee (clamped total only)',
+      width,
+      height,
+      scales: {{ x: {{ time: false }} }},
+      series: [
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
+        {{ label: 'Charged fee (gwei/L2 gas)', stroke: '#16a34a', width: 1.4 }}
       ],
       axes: [
         {{ label: 'L1 Block Number' }},
@@ -1986,6 +2071,12 @@ def build_app_js(blocks, base, blob, time_anchor):
     reqWrap
   );
 
+  chargedFeeOnlyPlot = new uPlot(
+    makeChargedFeeOnlyOpts(width, 320),
+    [blocks, []],
+    chargedOnlyWrap
+  );
+
   controllerPlot = new uPlot(
     makeControllerOpts(width, 320),
     [blocks, [], [], [], [], [], []],
@@ -2012,7 +2103,7 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   recalcDerivedSeries();
   setSweepUiState(false);
-  setSweepStatus('Sweep idle. Uses fixed alpha and sweeps only Kp/Ki/Kd across pdi + pdi+ff.');
+  setSweepStatus('Sweep idle. Sweeps Kp/Ki/Kd across pdi + pdi+ff and alpha variants (current, zero).');
   setSweepHoverText('Hover point: -');
   updateRangeText(MIN_BLOCK, MAX_BLOCK);
 
@@ -2561,8 +2652,8 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>UX fee step p99: <strong id=\"uxFeeStepP99\">-</strong></span>
             <span>UX fee step max: <strong id=\"uxFeeStepMax\">-</strong></span>
           </div>
-          <div class=\"assumptions-title\">Parameter Sweep (fixed alpha)</div>
-          <div class=\"formula\">Sweep modes are fixed to pdi + pdi+ff; swept params are Kp, Ki, Kd only.</div>
+          <div class=\"assumptions-title\">Parameter Sweep</div>
+          <div class=\"formula\">Sweep modes are fixed to pdi + pdi+ff; swept params are alpha variant (current/zero), Kp, Ki, Kd.</div>
           <div class=\"controls\">
             <button class=\"primary\" id=\"sweepBtn\">Run parameter sweep</button>
             <button id=\"sweepCancelBtn\" disabled>Cancel sweep</button>
@@ -2576,6 +2667,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>Sweep size: <strong id=\"sweepCandidateCount\">-</strong></span>
             <span>Range size: <strong id=\"sweepRangeCount\">-</strong></span>
             <span>Best mode: <strong id=\"sweepBestMode\">-</strong></span>
+            <span>Best alpha: <strong id=\"sweepBestAlphaVariant\">-</strong></span>
             <span>Best Kp: <strong id=\"sweepBestKp\">-</strong></span>
             <span>Best Ki: <strong id=\"sweepBestKi\">-</strong></span>
             <span>Best Kd: <strong id=\"sweepBestKd\">-</strong></span>
@@ -2595,6 +2687,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
         <div id=\"l2GasPlot\" class=\"plot\"></div>
         <div id=\"costPlot\" class=\"plot\"></div>
         <div id=\"requiredFeePlot\" class=\"plot\"></div>
+        <div id=\"chargedFeeOnlyPlot\" class=\"plot\"></div>
         <div id=\"controllerPlot\" class=\"plot\"></div>
         <div id=\"feedbackPlot\" class=\"plot\"></div>
         <div id=\"vaultPlot\" class=\"plot\"></div>

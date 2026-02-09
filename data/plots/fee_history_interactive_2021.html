@@ -276,11 +276,11 @@
             <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0.000167" /></label>
             <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.000437" /></label>
             <label>Kp <input id="kp" type="number" min="0" step="0.001" value="0.1" /></label>
-            <label>P floor (gwei/L2 gas) <input id="pMinGwei" type="number" step="0.0001" value="-1" /></label>
+            <label>P floor (gwei/L2 gas) <input id="pMinGwei" type="number" step="0.0001" value="0" /></label>
             <label>Ki <input id="ki" type="number" min="0" step="0.001" value="0" /></label>
             <label>Kd <input id="kd" type="number" min="0" step="0.001" value="0" /></label>
-            <label>I min <input id="iMin" type="number" step="0.1" value="-5" /></label>
-            <label>I max <input id="iMax" type="number" step="0.1" value="5" /></label>
+            <label>I min <input id="iMin" type="number" step="0.1" value="0" /></label>
+            <label>I max <input id="iMax" type="number" step="0.1" value="10" /></label>
             <label>Feedforward delay d_ff (L1 blocks) <input id="dffBlocks" type="number" min="0" step="1" value="5" /></label>
             <label>Feedback delay d_fb (L1 blocks) <input id="dfbBlocks" type="number" min="0" step="1" value="5" /></label>
             <label>D smoothing beta <input id="dSmoothBeta" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
@@ -372,8 +372,8 @@
             <span>UX fee step p99: <strong id="uxFeeStepP99">-</strong></span>
             <span>UX fee step max: <strong id="uxFeeStepMax">-</strong></span>
           </div>
-          <div class="assumptions-title">Parameter Sweep (fixed alpha)</div>
-          <div class="formula">Sweep modes are fixed to pdi + pdi+ff; swept params are Kp, Ki, Kd only.</div>
+          <div class="assumptions-title">Parameter Sweep</div>
+          <div class="formula">Sweep modes are fixed to pdi + pdi+ff; swept params are alpha variant (current/zero), Kp, Ki, Kd.</div>
           <div class="controls">
             <button class="primary" id="sweepBtn">Run parameter sweep</button>
             <button id="sweepCancelBtn" disabled>Cancel sweep</button>
@@ -387,6 +387,7 @@
             <span>Sweep size: <strong id="sweepCandidateCount">-</strong></span>
             <span>Range size: <strong id="sweepRangeCount">-</strong></span>
             <span>Best mode: <strong id="sweepBestMode">-</strong></span>
+            <span>Best alpha: <strong id="sweepBestAlphaVariant">-</strong></span>
             <span>Best Kp: <strong id="sweepBestKp">-</strong></span>
             <span>Best Ki: <strong id="sweepBestKi">-</strong></span>
             <span>Best Kd: <strong id="sweepBestKd">-</strong></span>
@@ -406,6 +407,7 @@
         <div id="l2GasPlot" class="plot"></div>
         <div id="costPlot" class="plot"></div>
         <div id="requiredFeePlot" class="plot"></div>
+        <div id="chargedFeeOnlyPlot" class="plot"></div>
         <div id="controllerPlot" class="plot"></div>
         <div id="feedbackPlot" class="plot"></div>
         <div id="vaultPlot" class="plot"></div>
