@@ -31,6 +31,7 @@
   let ANCHOR_TIMESTAMP_SEC = 0;
   let TIME_ANCHOR_SOURCE = 'none';
   let datasetReady = false;
+  const datasetRangeById = Object.create(null);
 
   const minInput = document.getElementById('minBlock');
   const maxInput = document.getElementById('maxBlock');
@@ -228,7 +229,11 @@
     const meta = getDatasetMeta(id);
     if (!meta) throw new Error(`unknown dataset "${id}"`);
 
+    const prevActiveId = activeDatasetId;
     const prevRange = datasetReady ? clampRange(minInput.value, maxInput.value) : null;
+    if (datasetReady && prevActiveId && prevRange) {
+      datasetRangeById[prevActiveId] = [prevRange[0], prevRange[1]];
+    }
     const payload = await ensureDatasetLoaded(id);
     const payloadBlocks = Array.isArray(payload.blocks) ? payload.blocks : [];
     const payloadBase = Array.isArray(payload.baseFeeGwei) ? payload.baseFeeGwei : [];
@@ -260,10 +265,21 @@
 
     let nextMin = MIN_BLOCK;
     let nextMax = MAX_BLOCK;
-    if (preserveRange && prevRange) {
-      const clipped = clampRange(prevRange[0], prevRange[1]);
-      nextMin = clipped[0];
-      nextMax = clipped[1];
+    if (preserveRange) {
+      const savedRange = datasetRangeById[id];
+      if (savedRange && savedRange.length === 2) {
+        const clipped = clampRange(savedRange[0], savedRange[1]);
+        nextMin = clipped[0];
+        nextMax = clipped[1];
+      } else if (prevRange) {
+        const overlapMin = Math.max(prevRange[0], MIN_BLOCK);
+        const overlapMax = Math.min(prevRange[1], MAX_BLOCK);
+        if (overlapMin <= overlapMax) {
+          const clipped = clampRange(overlapMin, overlapMax);
+          nextMin = clipped[0];
+          nextMax = clipped[1];
+        }
+      }
     }
     minInput.value = nextMin;
     maxInput.value = nextMax;
@@ -2016,6 +2032,7 @@
     const [minB, maxB] = clampRange(minVal, maxVal);
     minInput.value = minB;
     maxInput.value = maxB;
+    if (activeDatasetId) datasetRangeById[activeDatasetId] = [minB, maxB];
     updateRangeText(minB, maxB);
 
     syncing = true;
