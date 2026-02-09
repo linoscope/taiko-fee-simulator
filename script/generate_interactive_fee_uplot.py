@@ -41,6 +41,7 @@ DEFAULT_HEALTH_W_UNDER = 0.25
 DEFAULT_HEALTH_W_AREA = 0.20
 DEFAULT_HEALTH_W_GAP = 0.10
 DEFAULT_HEALTH_W_STREAK = 0.10
+DEFAULT_HEALTH_W_POSTBE = 0.20
 
 DEFAULT_UX_W_STD = 0.20
 DEFAULT_UX_W_P95 = 0.20
@@ -318,6 +319,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const healthWAreaInput = document.getElementById('healthWArea');
   const healthWGapInput = document.getElementById('healthWGap');
   const healthWStreakInput = document.getElementById('healthWStreak');
+  const healthWPostBEInput = document.getElementById('healthWPostBE');
   const uxWStdInput = document.getElementById('uxWStd');
   const uxWP95Input = document.getElementById('uxWP95');
   const uxWP99Input = document.getElementById('uxWP99');
@@ -350,6 +352,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const healthMaxDrawdown = document.getElementById('healthMaxDrawdown');
   const healthUnderTargetRatio = document.getElementById('healthUnderTargetRatio');
   const healthAbsFinalGap = document.getElementById('healthAbsFinalGap');
+  const healthPostBreakEvenRatio = document.getElementById('healthPostBreakEvenRatio');
   const healthDeficitAreaBand = document.getElementById('healthDeficitAreaBand');
   const healthWorstDeficitStreak = document.getElementById('healthWorstDeficitStreak');
   const uxFeeStd = document.getElementById('uxFeeStd');
@@ -602,6 +605,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     let deficitAreaBand = 0;
     let worstStreak = 0;
     let curStreak = 0;
+    let postCount = 0;
+    let postBreakEvenCount = 0;
     let clampMaxCount = 0;
 
     let feeSum = 0;
@@ -629,6 +634,11 @@ def build_app_js(blocks, base, blob, time_anchor):
       deficitAreaBand += Math.max(0, deficitEth - deadbandEth);
 
       if (derivedClampState[i] === 'max') clampMaxCount += 1;
+      const postBreakEven = derivedPostBreakEvenFlag[i];
+      if (postBreakEven != null) {{
+        postCount += 1;
+        if (postBreakEven) postBreakEvenCount += 1;
+      }}
 
       const fee = derivedChargedFeeGwei[i];
       feeSum += fee;
@@ -653,6 +663,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     const clampMaxRatio = clampMaxCount / n;
     const breakEvenFeeMean = breakEvenFeeCount > 0 ? (breakEvenFeeSum / breakEvenFeeCount) : 0;
     const underTargetRatio = underCount / n;
+    const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
+    const dPost = 1 - postBreakEvenRatio;
 
     const finalGapEth = derivedVaultEth[i1] - derivedVaultTargetEth[i1];
     const absFinalGapEth = Math.abs(finalGapEth);
@@ -677,6 +689,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const wArea = parseWeight(healthWAreaInput, {DEFAULT_HEALTH_W_AREA});
     const wGap = parseWeight(healthWGapInput, {DEFAULT_HEALTH_W_GAP});
     const wStreak = parseWeight(healthWStreakInput, {DEFAULT_HEALTH_W_STREAK});
+    const wPostBE = parseWeight(healthWPostBEInput, {DEFAULT_HEALTH_W_POSTBE});
 
     const wStd = parseWeight(uxWStdInput, {DEFAULT_UX_W_STD});
     const wP95 = parseWeight(uxWP95Input, {DEFAULT_UX_W_P95});
@@ -689,8 +702,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     const wUx = parseWeight(scoreWeightUxInput, {DEFAULT_UX_WEIGHT});
 
     const healthBadness = normalizedWeightedSum(
-      [dDraw, dUnder, dArea, dGap, dStreak],
-      [wDraw, wUnder, wArea, wGap, wStreak]
+      [dDraw, dUnder, dArea, dGap, dStreak, dPost],
+      [wDraw, wUnder, wArea, wGap, wStreak, wPostBE]
     );
     const uxBadness = normalizedWeightedSum(
       [uStd, uP95, uP99, uMax, uClamp, uLevel],
@@ -707,6 +720,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     healthMaxDrawdown.textContent = `${{formatNum(maxDrawdownEth, 6)}} ETH`;
     healthUnderTargetRatio.textContent = `${{formatNum(underTargetRatio, 4)}}`;
     healthAbsFinalGap.textContent = `${{formatNum(absFinalGapEth, 6)}} ETH`;
+    healthPostBreakEvenRatio.textContent = `${{formatNum(postBreakEvenRatio, 4)}}`;
     healthDeficitAreaBand.textContent = `${{formatNum(deficitAreaBand, 6)}} ETH*block`;
     healthWorstDeficitStreak.textContent = `${{formatNum(worstStreak, 0)}} blocks`;
 
@@ -718,8 +732,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     uxFeeLevelMean.textContent = `${{formatNum(uLevel, 4)}}`;
 
     healthFormulaLine.textContent =
-      `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wGap*dGap + wStreak*dStreak ` +
-      `(dDraw=${{formatNum(dDraw, 4)}}, dUnder=${{formatNum(dUnder, 4)}}, dArea=${{formatNum(dArea, 4)}}, dGap=${{formatNum(dGap, 4)}}, dStreak=${{formatNum(dStreak, 4)}})`;
+      `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wGap*dGap + wStreak*dStreak + wPostBE*dPost ` +
+      `(dDraw=${{formatNum(dDraw, 4)}}, dUnder=${{formatNum(dUnder, 4)}}, dArea=${{formatNum(dArea, 4)}}, dGap=${{formatNum(dGap, 4)}}, dStreak=${{formatNum(dStreak, 4)}}, dPost=${{formatNum(dPost, 4)}})`;
     uxFormulaLine.textContent =
       `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp + wLevel*uLevel ` +
       `(uStd=${{formatNum(uStd, 4)}}, uP95=${{formatNum(uP95, 4)}}, uP99=${{formatNum(uP99, 4)}}, uMax=${{formatNum(uMax, 4)}}, uClamp=${{formatNum(uClamp, 4)}}, uLevel=${{formatNum(uLevel, 4)}})`;
@@ -871,6 +885,8 @@ def build_app_js(blocks, base, blob, time_anchor):
   let derivedDTermFeeGwei = [];
   let derivedFeedbackFeeGwei = [];
   let derivedChargedFeeGwei = [];
+  let derivedPostingRevenueAtPostEth = [];
+  let derivedPostBreakEvenFlag = [];
   let derivedDeficitEth = [];
   let derivedEpsilon = [];
   let derivedDerivative = [];
@@ -936,6 +952,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       wArea: parseWeight(healthWAreaInput, {DEFAULT_HEALTH_W_AREA}),
       wGap: parseWeight(healthWGapInput, {DEFAULT_HEALTH_W_GAP}),
       wStreak: parseWeight(healthWStreakInput, {DEFAULT_HEALTH_W_STREAK}),
+      wPostBE: parseWeight(healthWPostBEInput, {DEFAULT_HEALTH_W_POSTBE}),
       wStd: parseWeight(uxWStdInput, {DEFAULT_UX_W_STD}),
       wP95: parseWeight(uxWP95Input, {DEFAULT_UX_W_P95}),
       wP99: parseWeight(uxWP99Input, {DEFAULT_UX_W_P99}),
@@ -1053,6 +1070,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     derivedDTermFeeGwei = new Array(n);
     derivedFeedbackFeeGwei = new Array(n);
     derivedChargedFeeGwei = new Array(n);
+    derivedPostingRevenueAtPostEth = new Array(n);
+    derivedPostBreakEvenFlag = new Array(n);
     derivedDeficitEth = new Array(n);
     derivedEpsilon = new Array(n);
     derivedDerivative = new Array(n);
@@ -1144,9 +1163,15 @@ def build_app_js(blocks, base, blob, time_anchor):
       // Fixed-cadence posting event: deduct fixed-resource posting cost at post blocks.
       const posted = ((i + 1) % postEveryBlocks) === 0;
       if (posted) {{
-        vault += pendingRevenueEth;
+        const postingRevenueEth = pendingRevenueEth;
+        derivedPostingRevenueAtPostEth[i] = postingRevenueEth;
+        derivedPostBreakEvenFlag[i] = postingRevenueEth + 1e-12 >= derivedPostingCostEth[i];
+        vault += postingRevenueEth;
         pendingRevenueEth = 0;
         vault -= derivedPostingCostEth[i];
+      }} else {{
+        derivedPostingRevenueAtPostEth[i] = null;
+        derivedPostBreakEvenFlag[i] = null;
       }}
 
       derivedVaultEth[i] = vault;
@@ -1295,6 +1320,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     let deficitAreaBand = 0;
     let worstStreak = 0;
     let currentStreak = 0;
+    let postCount = 0;
+    let postBreakEvenCount = 0;
 
     for (let local = 0; local < n; local++) {{
       const i = i0 + local;
@@ -1360,7 +1387,10 @@ def build_app_js(blocks, base, blob, time_anchor):
 
       const posted = ((i + 1) % simCfg.postEveryBlocks) === 0;
       if (posted) {{
-        vault += pendingRevenueEth;
+        const postingRevenueEth = pendingRevenueEth;
+        if (postingRevenueEth + 1e-12 >= totalCostWei / 1e18) postBreakEvenCount += 1;
+        postCount += 1;
+        vault += postingRevenueEth;
         pendingRevenueEth = 0;
         vault -= totalCostWei / 1e18;
       }}
@@ -1384,6 +1414,8 @@ def build_app_js(blocks, base, blob, time_anchor):
 
     const lastVault = vaultSeries[n - 1];
     const underTargetRatio = n > 0 ? (underTargetCount / n) : 0;
+    const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
+    const dPost = 1 - postBreakEvenRatio;
     const absFinalGapEth = Math.abs(lastVault - simCfg.targetVaultEth);
     const meanFee = feeCount > 0 ? (feeSum / feeCount) : 0;
     const variance = feeCount > 0 ? Math.max(0, (feeSumSq / feeCount) - meanFee * meanFee) : 0;
@@ -1400,8 +1432,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     const dGap = absFinalGapEth / targetDenom;
     const dStreak = n > 0 ? (worstStreak / n) : 0;
     const healthBadness = normalizedWeightedSum(
-      [dDraw, dUnder, dArea, dGap, dStreak],
-      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wGap, scoreCfg.wStreak]
+      [dDraw, dUnder, dArea, dGap, dStreak, dPost],
+      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wGap, scoreCfg.wStreak, scoreCfg.wPostBE]
     );
 
     const uStd = feeStd / feeDenom;
@@ -1436,6 +1468,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       totalBadness,
       maxDrawdownEth,
       underTargetRatio,
+      postBreakEvenRatio,
       absFinalGapEth,
       feeStd,
       stepP95,
@@ -2271,6 +2304,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     healthWAreaInput,
     healthWGapInput,
     healthWStreakInput,
+    healthWPostBEInput,
     uxWStdInput,
     uxWP95Input,
     uxWP99Input,
@@ -2654,6 +2688,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Max drawdown</div><div class=\"score-kpi-value\" id=\"healthMaxDrawdown\">-</div></div>
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Under-target ratio</div><div class=\"score-kpi-value\" id=\"healthUnderTargetRatio\">-</div></div>
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Abs final gap</div><div class=\"score-kpi-value\" id=\"healthAbsFinalGap\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Post break-even ratio</div><div class=\"score-kpi-value\" id=\"healthPostBreakEvenRatio\">-</div></div>
           </div>
           <div class=\"score-subtitle\">Important UX Metrics</div>
           <div class=\"score-kpis\">
@@ -2669,6 +2704,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <label>Health w_area <input id=\"healthWArea\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_AREA:g}\" /></label>
             <label>Health w_gap <input id=\"healthWGap\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_GAP:g}\" /></label>
             <label>Health w_streak <input id=\"healthWStreak\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_STREAK:g}\" /></label>
+            <label>Health w_postBE <input id=\"healthWPostBE\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_POSTBE:g}\" /></label>
             <label>UX w_std <input id=\"uxWStd\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_STD:g}\" /></label>
             <label>UX w_p95 <input id=\"uxWP95\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_P95:g}\" /></label>
             <label>UX w_p99 <input id=\"uxWP99\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_P99:g}\" /></label>
@@ -2739,13 +2775,14 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
       <div class=\"help-body\">
         <p><strong>Goal:</strong> compare controller settings over the selected block range. Lower score is better.</p>
         <p><code>total_badness = weighted_mean(health_badness, ux_badness)</code></p>
-        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dGap, dStreak)</code></p>
+        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dGap, dStreak, dPost)</code></p>
         <ul>
           <li><code>dDraw</code>: max under-target gap, normalized by target vault</li>
           <li><code>dUnder</code>: fraction of blocks with vault below target</li>
           <li><code>dArea</code>: deadbanded deficit area, normalized by target and range length</li>
           <li><code>dGap</code>: absolute final vault-target gap, normalized by target</li>
           <li><code>dStreak</code>: longest consecutive under-target run, normalized by range length</li>
+          <li><code>dPost</code>: fraction of posting events that do not break even</li>
         </ul>
         <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp, uLevel)</code></p>
         <ul>
