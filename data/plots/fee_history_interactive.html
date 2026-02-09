@@ -90,7 +90,14 @@
     .range-text { font-size: 12px; color: var(--muted); }
     .range-main { margin-left: auto; }
     .range-sub { font-size: 12px; color: var(--muted); }
-    .status { margin: 4px 0 0; min-height: 18px; font-size: 12px; color: #b45309; }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0 0;
+      min-height: 18px;
+    }
+    .status { margin: 0; min-height: 18px; font-size: 12px; color: #b45309; }
     .metrics { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin: 6px 0; }
     .plot { width: 100%; min-height: 336px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }
     .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; word-break: break-word; }
@@ -133,6 +140,39 @@
     @keyframes spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
+    }
+    .busy-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.28);
+      z-index: 9999;
+      pointer-events: all;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    .busy-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border: 1px solid #94a3b8;
+      border-radius: 12px;
+      background: #ffffff;
+      color: #0f172a;
+      font-size: 16px;
+      font-weight: 600;
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.22);
+    }
+    .busy-spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #cbd5e1;
+      border-top-color: #0f766e;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      flex: 0 0 24px;
     }
     .score-subtitle {
       font-size: 12px;
@@ -209,6 +249,12 @@
 </head>
 <body>
   <div class="wrap">
+    <div id="busyOverlay" class="busy-overlay">
+      <div class="busy-card">
+        <span class="busy-spinner"></span>
+        <span>Working...</span>
+      </div>
+    </div>
     <h1>Ethereum + L2 Posting Cost Explorer</h1>
     <p class="sub">Drag horizontally inside any chart to zoom. Block range controls and zoom are synchronized across all charts.</p>
 
@@ -402,7 +448,10 @@
           <div class="formula" id="sweepHover">Hover point: -</div>
         </div>
 
-        <div class="status" id="status"></div>
+        <div class="status-line">
+          <span class="spinner" id="busySpinner"></span>
+          <div class="status" id="status"></div>
+        </div>
       </aside>
 
       <main class="content">

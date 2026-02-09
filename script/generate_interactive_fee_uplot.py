@@ -293,6 +293,8 @@ def build_app_js():
   const rangeDateText = document.getElementById('rangeDateText');
   const hoverText = document.getElementById('hoverText');
   const status = document.getElementById('status');
+  const busySpinner = document.getElementById('busySpinner');
+  const busyOverlay = document.getElementById('busyOverlay');
   const datasetRangeInput = document.getElementById('datasetRange');
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
@@ -407,6 +409,44 @@ def build_app_js():
   const vaultWrap = document.getElementById('vaultPlot');
   const sweepWrap = document.getElementById('sweepPlot');
 
+  let uiBusyCount = 0;
+  let recalcPending = false;
+  let recalcNeedsRerun = false;
+
+  function setUiBusy(active) {{
+    uiBusyCount += active ? 1 : -1;
+    if (uiBusyCount < 0) uiBusyCount = 0;
+    const show = uiBusyCount > 0;
+    if (busySpinner) busySpinner.style.display = show ? 'inline-block' : 'none';
+    if (busyOverlay) busyOverlay.style.display = show ? 'inline-flex' : 'none';
+  }}
+
+  function scheduleRecalc(statusMsg = 'Recomputing derived charts...') {{
+    setStatus(statusMsg);
+    if (recalcPending) {{
+      recalcNeedsRerun = true;
+      return;
+    }}
+    recalcPending = true;
+    setUiBusy(true);
+
+    function runOnce() {{
+      try {{
+        recalcDerivedSeries();
+      }} finally {{
+        if (recalcNeedsRerun) {{
+          recalcNeedsRerun = false;
+          window.setTimeout(runOnce, 0);
+        }} else {{
+          recalcPending = false;
+          setUiBusy(false);
+        }}
+      }}
+    }}
+
+    window.setTimeout(runOnce, 0);
+  }}
+
   function setStatus(msg) {{
     status.textContent = msg || '';
   }}
@@ -479,73 +519,78 @@ def build_app_js():
   }}
 
   async function activateDataset(datasetId, preserveRange = true) {{
-    const id = String(datasetId || '');
-    const meta = getDatasetMeta(id);
-    if (!meta) throw new Error(`unknown dataset "${{id}}"`);
+    setUiBusy(true);
+    try {{
+      const id = String(datasetId || '');
+      const meta = getDatasetMeta(id);
+      if (!meta) throw new Error(`unknown dataset "${{id}}"`);
 
-    const prevActiveId = activeDatasetId;
-    const prevRange = datasetReady ? clampRange(minInput.value, maxInput.value) : null;
-    if (datasetReady && prevActiveId && prevRange) {{
-      datasetRangeById[prevActiveId] = [prevRange[0], prevRange[1]];
-    }}
-    const payload = await ensureDatasetLoaded(id);
-    const payloadBlocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-    const payloadBase = Array.isArray(payload.baseFeeGwei) ? payload.baseFeeGwei : [];
-    const payloadBlob = Array.isArray(payload.blobFeeGwei) ? payload.blobFeeGwei : [];
-    if (!payloadBlocks.length || payloadBase.length !== payloadBlocks.length || payloadBlob.length !== payloadBlocks.length) {{
-      throw new Error(`invalid dataset payload for "${{id}}"`);
-    }}
+      const prevActiveId = activeDatasetId;
+      const prevRange = datasetReady ? clampRange(minInput.value, maxInput.value) : null;
+      if (datasetReady && prevActiveId && prevRange) {{
+        datasetRangeById[prevActiveId] = [prevRange[0], prevRange[1]];
+      }}
+      const payload = await ensureDatasetLoaded(id);
+      const payloadBlocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+      const payloadBase = Array.isArray(payload.baseFeeGwei) ? payload.baseFeeGwei : [];
+      const payloadBlob = Array.isArray(payload.blobFeeGwei) ? payload.blobFeeGwei : [];
+      if (!payloadBlocks.length || payloadBase.length !== payloadBlocks.length || payloadBlob.length !== payloadBlocks.length) {{
+        throw new Error(`invalid dataset payload for "${{id}}"`);
+      }}
 
-    blocks = payloadBlocks;
-    baseFeeGwei = payloadBase;
-    blobFeeGwei = payloadBlob;
+      blocks = payloadBlocks;
+      baseFeeGwei = payloadBase;
+      blobFeeGwei = payloadBlob;
 
-    MIN_BLOCK = blocks[0];
-    MAX_BLOCK = blocks[blocks.length - 1];
+      MIN_BLOCK = blocks[0];
+      MAX_BLOCK = blocks[blocks.length - 1];
 
-    const anchor = payload.timeAnchor || {{}};
-    HAS_BLOCK_TIME_ANCHOR = Boolean(anchor.has_anchor);
-    BLOCK_TIME_APPROX_SECONDS = Number(anchor.seconds_per_block);
-    if (!Number.isFinite(BLOCK_TIME_APPROX_SECONDS) || BLOCK_TIME_APPROX_SECONDS <= 0) {{
-      BLOCK_TIME_APPROX_SECONDS = L1_BLOCK_TIME_SECONDS;
-    }}
-    ANCHOR_BLOCK = Number.isFinite(Number(anchor.anchor_block)) ? Number(anchor.anchor_block) : MIN_BLOCK;
-    ANCHOR_TIMESTAMP_SEC = Number.isFinite(Number(anchor.anchor_ts_sec)) ? Number(anchor.anchor_ts_sec) : 0;
-    TIME_ANCHOR_SOURCE = anchor.source ? String(anchor.source) : 'none';
+      const anchor = payload.timeAnchor || {{}};
+      HAS_BLOCK_TIME_ANCHOR = Boolean(anchor.has_anchor);
+      BLOCK_TIME_APPROX_SECONDS = Number(anchor.seconds_per_block);
+      if (!Number.isFinite(BLOCK_TIME_APPROX_SECONDS) || BLOCK_TIME_APPROX_SECONDS <= 0) {{
+        BLOCK_TIME_APPROX_SECONDS = L1_BLOCK_TIME_SECONDS;
+      }}
+      ANCHOR_BLOCK = Number.isFinite(Number(anchor.anchor_block)) ? Number(anchor.anchor_block) : MIN_BLOCK;
+      ANCHOR_TIMESTAMP_SEC = Number.isFinite(Number(anchor.anchor_ts_sec)) ? Number(anchor.anchor_ts_sec) : 0;
+      TIME_ANCHOR_SOURCE = anchor.source ? String(anchor.source) : 'none';
 
-    activeDatasetId = id;
-    if (datasetRangeInput) datasetRangeInput.value = id;
-    updateDatasetQuery(id);
+      activeDatasetId = id;
+      if (datasetRangeInput) datasetRangeInput.value = id;
+      updateDatasetQuery(id);
 
-    let nextMin = MIN_BLOCK;
-    let nextMax = MAX_BLOCK;
-    if (preserveRange) {{
-      const savedRange = datasetRangeById[id];
-      if (savedRange && savedRange.length === 2) {{
-        const clipped = clampRange(savedRange[0], savedRange[1]);
-        nextMin = clipped[0];
-        nextMax = clipped[1];
-      }} else if (prevRange) {{
-        const overlapMin = Math.max(prevRange[0], MIN_BLOCK);
-        const overlapMax = Math.min(prevRange[1], MAX_BLOCK);
-        if (overlapMin <= overlapMax) {{
-          const clipped = clampRange(overlapMin, overlapMax);
+      let nextMin = MIN_BLOCK;
+      let nextMax = MAX_BLOCK;
+      if (preserveRange) {{
+        const savedRange = datasetRangeById[id];
+        if (savedRange && savedRange.length === 2) {{
+          const clipped = clampRange(savedRange[0], savedRange[1]);
           nextMin = clipped[0];
           nextMax = clipped[1];
+        }} else if (prevRange) {{
+          const overlapMin = Math.max(prevRange[0], MIN_BLOCK);
+          const overlapMax = Math.min(prevRange[1], MAX_BLOCK);
+          if (overlapMin <= overlapMax) {{
+            const clipped = clampRange(overlapMin, overlapMax);
+            nextMin = clipped[0];
+            nextMax = clipped[1];
+          }}
         }}
       }}
+      minInput.value = nextMin;
+      maxInput.value = nextMax;
+
+      if (basePlot) basePlot.setData([blocks, baseFeeGwei]);
+      if (blobPlot) blobPlot.setData([blocks, blobFeeGwei]);
+
+      datasetReady = true;
+      markSweepStale('dataset changed');
+      recalcDerivedSeries();
+      applyRange(nextMin, nextMax, null);
+      setStatus(`Loaded dataset: ${{meta.label || id}}`);
+    }} finally {{
+      setUiBusy(false);
     }}
-    minInput.value = nextMin;
-    maxInput.value = nextMax;
-
-    if (basePlot) basePlot.setData([blocks, baseFeeGwei]);
-    if (blobPlot) blobPlot.setData([blocks, blobFeeGwei]);
-
-    datasetReady = true;
-    markSweepStale('dataset changed');
-    recalcDerivedSeries();
-    applyRange(nextMin, nextMax, null);
-    setStatus(`Loaded dataset: ${{meta.label || id}}`);
   }}
 
   function resolveInitialDatasetId() {{
@@ -2422,13 +2467,20 @@ def build_app_js():
     applyRange(MAX_BLOCK - 5000, MAX_BLOCK, null);
   }});
 
-  document.getElementById('recalcBtn').addEventListener('click', recalcDerivedSeries);
+  document.getElementById('recalcBtn').addEventListener('click', function () {{
+    scheduleRecalc('Recomputing derived charts...');
+  }});
 
   if (scoreBtn) {{
     scoreBtn.addEventListener('click', function () {{
       if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
+      setUiBusy(true);
       window.setTimeout(function () {{
-        scoreCurrentRangeNow();
+        try {{
+          scoreCurrentRangeNow();
+        }} finally {{
+          setUiBusy(false);
+        }}
       }}, 0);
     }});
   }}
@@ -2487,7 +2539,7 @@ def build_app_js():
 
   controllerModeInput.addEventListener('change', function () {{
     applyControllerModePreset(controllerModeInput.value || 'alpha-only');
-    recalcDerivedSeries();
+    scheduleRecalc('Applying controller mode...');
   }});
 
   minInput.addEventListener('keydown', function (e) {{
@@ -2525,9 +2577,11 @@ def build_app_js():
     targetVaultEthInput
   ].forEach(function (el) {{
     el.addEventListener('keydown', function (e) {{
-      if (e.key === 'Enter') recalcDerivedSeries();
+      if (e.key === 'Enter') scheduleRecalc('Applying parameter changes...');
     }});
-    el.addEventListener('change', recalcDerivedSeries);
+    el.addEventListener('change', function () {{
+      scheduleRecalc('Applying parameter changes...');
+    }});
   }});
 
   [
@@ -2724,7 +2778,14 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
     .range-text {{ font-size: 12px; color: var(--muted); }}
     .range-main {{ margin-left: auto; }}
     .range-sub {{ font-size: 12px; color: var(--muted); }}
-    .status {{ margin: 4px 0 0; min-height: 18px; font-size: 12px; color: #b45309; }}
+    .status-line {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0 0;
+      min-height: 18px;
+    }}
+    .status {{ margin: 0; min-height: 18px; font-size: 12px; color: #b45309; }}
     .metrics {{ display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin: 6px 0; }}
     .plot {{ width: 100%; min-height: 336px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }}
     .formula {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; word-break: break-word; }}
@@ -2767,6 +2828,39 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
     @keyframes spin {{
       from {{ transform: rotate(0deg); }}
       to {{ transform: rotate(360deg); }}
+    }}
+    .busy-overlay {{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.28);
+      z-index: 9999;
+      pointer-events: all;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    }}
+    .busy-card {{
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border: 1px solid #94a3b8;
+      border-radius: 12px;
+      background: #ffffff;
+      color: #0f172a;
+      font-size: 16px;
+      font-weight: 600;
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.22);
+    }}
+    .busy-spinner {{
+      width: 24px;
+      height: 24px;
+      border: 3px solid #cbd5e1;
+      border-top-color: #0f766e;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      flex: 0 0 24px;
     }}
     .score-subtitle {{
       font-size: 12px;
@@ -2843,6 +2937,12 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
 </head>
 <body>
   <div class=\"wrap\">
+    <div id=\"busyOverlay\" class=\"busy-overlay\">
+      <div class=\"busy-card\">
+        <span class=\"busy-spinner\"></span>
+        <span>Working...</span>
+      </div>
+    </div>
     <h1>{title}</h1>
     <p class=\"sub\">Drag horizontally inside any chart to zoom. Block range controls and zoom are synchronized across all charts.</p>
 
@@ -3026,7 +3126,10 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
           <div class=\"formula\" id=\"sweepHover\">Hover point: -</div>
         </div>
 
-        <div class=\"status\" id=\"status\"></div>
+        <div class=\"status-line\">
+          <span class=\"spinner\" id=\"busySpinner\"></span>
+          <div class=\"status\" id=\"status\"></div>
+        </div>
       </aside>
 
       <main class=\"content\">

@@ -39,6 +39,8 @@
   const rangeDateText = document.getElementById('rangeDateText');
   const hoverText = document.getElementById('hoverText');
   const status = document.getElementById('status');
+  const busySpinner = document.getElementById('busySpinner');
+  const busyOverlay = document.getElementById('busyOverlay');
   const datasetRangeInput = document.getElementById('datasetRange');
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
@@ -153,6 +155,44 @@
   const vaultWrap = document.getElementById('vaultPlot');
   const sweepWrap = document.getElementById('sweepPlot');
 
+  let uiBusyCount = 0;
+  let recalcPending = false;
+  let recalcNeedsRerun = false;
+
+  function setUiBusy(active) {
+    uiBusyCount += active ? 1 : -1;
+    if (uiBusyCount < 0) uiBusyCount = 0;
+    const show = uiBusyCount > 0;
+    if (busySpinner) busySpinner.style.display = show ? 'inline-block' : 'none';
+    if (busyOverlay) busyOverlay.style.display = show ? 'inline-flex' : 'none';
+  }
+
+  function scheduleRecalc(statusMsg = 'Recomputing derived charts...') {
+    setStatus(statusMsg);
+    if (recalcPending) {
+      recalcNeedsRerun = true;
+      return;
+    }
+    recalcPending = true;
+    setUiBusy(true);
+
+    function runOnce() {
+      try {
+        recalcDerivedSeries();
+      } finally {
+        if (recalcNeedsRerun) {
+          recalcNeedsRerun = false;
+          window.setTimeout(runOnce, 0);
+        } else {
+          recalcPending = false;
+          setUiBusy(false);
+        }
+      }
+    }
+
+    window.setTimeout(runOnce, 0);
+  }
+
   function setStatus(msg) {
     status.textContent = msg || '';
   }
@@ -225,73 +265,78 @@
   }
 
   async function activateDataset(datasetId, preserveRange = true) {
-    const id = String(datasetId || '');
-    const meta = getDatasetMeta(id);
-    if (!meta) throw new Error(`unknown dataset "${id}"`);
+    setUiBusy(true);
+    try {
+      const id = String(datasetId || '');
+      const meta = getDatasetMeta(id);
+      if (!meta) throw new Error(`unknown dataset "${id}"`);
 
-    const prevActiveId = activeDatasetId;
-    const prevRange = datasetReady ? clampRange(minInput.value, maxInput.value) : null;
-    if (datasetReady && prevActiveId && prevRange) {
-      datasetRangeById[prevActiveId] = [prevRange[0], prevRange[1]];
-    }
-    const payload = await ensureDatasetLoaded(id);
-    const payloadBlocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-    const payloadBase = Array.isArray(payload.baseFeeGwei) ? payload.baseFeeGwei : [];
-    const payloadBlob = Array.isArray(payload.blobFeeGwei) ? payload.blobFeeGwei : [];
-    if (!payloadBlocks.length || payloadBase.length !== payloadBlocks.length || payloadBlob.length !== payloadBlocks.length) {
-      throw new Error(`invalid dataset payload for "${id}"`);
-    }
+      const prevActiveId = activeDatasetId;
+      const prevRange = datasetReady ? clampRange(minInput.value, maxInput.value) : null;
+      if (datasetReady && prevActiveId && prevRange) {
+        datasetRangeById[prevActiveId] = [prevRange[0], prevRange[1]];
+      }
+      const payload = await ensureDatasetLoaded(id);
+      const payloadBlocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+      const payloadBase = Array.isArray(payload.baseFeeGwei) ? payload.baseFeeGwei : [];
+      const payloadBlob = Array.isArray(payload.blobFeeGwei) ? payload.blobFeeGwei : [];
+      if (!payloadBlocks.length || payloadBase.length !== payloadBlocks.length || payloadBlob.length !== payloadBlocks.length) {
+        throw new Error(`invalid dataset payload for "${id}"`);
+      }
 
-    blocks = payloadBlocks;
-    baseFeeGwei = payloadBase;
-    blobFeeGwei = payloadBlob;
+      blocks = payloadBlocks;
+      baseFeeGwei = payloadBase;
+      blobFeeGwei = payloadBlob;
 
-    MIN_BLOCK = blocks[0];
-    MAX_BLOCK = blocks[blocks.length - 1];
+      MIN_BLOCK = blocks[0];
+      MAX_BLOCK = blocks[blocks.length - 1];
 
-    const anchor = payload.timeAnchor || {};
-    HAS_BLOCK_TIME_ANCHOR = Boolean(anchor.has_anchor);
-    BLOCK_TIME_APPROX_SECONDS = Number(anchor.seconds_per_block);
-    if (!Number.isFinite(BLOCK_TIME_APPROX_SECONDS) || BLOCK_TIME_APPROX_SECONDS <= 0) {
-      BLOCK_TIME_APPROX_SECONDS = L1_BLOCK_TIME_SECONDS;
-    }
-    ANCHOR_BLOCK = Number.isFinite(Number(anchor.anchor_block)) ? Number(anchor.anchor_block) : MIN_BLOCK;
-    ANCHOR_TIMESTAMP_SEC = Number.isFinite(Number(anchor.anchor_ts_sec)) ? Number(anchor.anchor_ts_sec) : 0;
-    TIME_ANCHOR_SOURCE = anchor.source ? String(anchor.source) : 'none';
+      const anchor = payload.timeAnchor || {};
+      HAS_BLOCK_TIME_ANCHOR = Boolean(anchor.has_anchor);
+      BLOCK_TIME_APPROX_SECONDS = Number(anchor.seconds_per_block);
+      if (!Number.isFinite(BLOCK_TIME_APPROX_SECONDS) || BLOCK_TIME_APPROX_SECONDS <= 0) {
+        BLOCK_TIME_APPROX_SECONDS = L1_BLOCK_TIME_SECONDS;
+      }
+      ANCHOR_BLOCK = Number.isFinite(Number(anchor.anchor_block)) ? Number(anchor.anchor_block) : MIN_BLOCK;
+      ANCHOR_TIMESTAMP_SEC = Number.isFinite(Number(anchor.anchor_ts_sec)) ? Number(anchor.anchor_ts_sec) : 0;
+      TIME_ANCHOR_SOURCE = anchor.source ? String(anchor.source) : 'none';
 
-    activeDatasetId = id;
-    if (datasetRangeInput) datasetRangeInput.value = id;
-    updateDatasetQuery(id);
+      activeDatasetId = id;
+      if (datasetRangeInput) datasetRangeInput.value = id;
+      updateDatasetQuery(id);
 
-    let nextMin = MIN_BLOCK;
-    let nextMax = MAX_BLOCK;
-    if (preserveRange) {
-      const savedRange = datasetRangeById[id];
-      if (savedRange && savedRange.length === 2) {
-        const clipped = clampRange(savedRange[0], savedRange[1]);
-        nextMin = clipped[0];
-        nextMax = clipped[1];
-      } else if (prevRange) {
-        const overlapMin = Math.max(prevRange[0], MIN_BLOCK);
-        const overlapMax = Math.min(prevRange[1], MAX_BLOCK);
-        if (overlapMin <= overlapMax) {
-          const clipped = clampRange(overlapMin, overlapMax);
+      let nextMin = MIN_BLOCK;
+      let nextMax = MAX_BLOCK;
+      if (preserveRange) {
+        const savedRange = datasetRangeById[id];
+        if (savedRange && savedRange.length === 2) {
+          const clipped = clampRange(savedRange[0], savedRange[1]);
           nextMin = clipped[0];
           nextMax = clipped[1];
+        } else if (prevRange) {
+          const overlapMin = Math.max(prevRange[0], MIN_BLOCK);
+          const overlapMax = Math.min(prevRange[1], MAX_BLOCK);
+          if (overlapMin <= overlapMax) {
+            const clipped = clampRange(overlapMin, overlapMax);
+            nextMin = clipped[0];
+            nextMax = clipped[1];
+          }
         }
       }
+      minInput.value = nextMin;
+      maxInput.value = nextMax;
+
+      if (basePlot) basePlot.setData([blocks, baseFeeGwei]);
+      if (blobPlot) blobPlot.setData([blocks, blobFeeGwei]);
+
+      datasetReady = true;
+      markSweepStale('dataset changed');
+      recalcDerivedSeries();
+      applyRange(nextMin, nextMax, null);
+      setStatus(`Loaded dataset: ${meta.label || id}`);
+    } finally {
+      setUiBusy(false);
     }
-    minInput.value = nextMin;
-    maxInput.value = nextMax;
-
-    if (basePlot) basePlot.setData([blocks, baseFeeGwei]);
-    if (blobPlot) blobPlot.setData([blocks, blobFeeGwei]);
-
-    datasetReady = true;
-    markSweepStale('dataset changed');
-    recalcDerivedSeries();
-    applyRange(nextMin, nextMax, null);
-    setStatus(`Loaded dataset: ${meta.label || id}`);
   }
 
   function resolveInitialDatasetId() {
@@ -2168,13 +2213,20 @@
     applyRange(MAX_BLOCK - 5000, MAX_BLOCK, null);
   });
 
-  document.getElementById('recalcBtn').addEventListener('click', recalcDerivedSeries);
+  document.getElementById('recalcBtn').addEventListener('click', function () {
+    scheduleRecalc('Recomputing derived charts...');
+  });
 
   if (scoreBtn) {
     scoreBtn.addEventListener('click', function () {
       if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
+      setUiBusy(true);
       window.setTimeout(function () {
-        scoreCurrentRangeNow();
+        try {
+          scoreCurrentRangeNow();
+        } finally {
+          setUiBusy(false);
+        }
       }, 0);
     });
   }
@@ -2233,7 +2285,7 @@
 
   controllerModeInput.addEventListener('change', function () {
     applyControllerModePreset(controllerModeInput.value || 'alpha-only');
-    recalcDerivedSeries();
+    scheduleRecalc('Applying controller mode...');
   });
 
   minInput.addEventListener('keydown', function (e) {
@@ -2271,9 +2323,11 @@
     targetVaultEthInput
   ].forEach(function (el) {
     el.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') recalcDerivedSeries();
+      if (e.key === 'Enter') scheduleRecalc('Applying parameter changes...');
     });
-    el.addEventListener('change', recalcDerivedSeries);
+    el.addEventListener('change', function () {
+      scheduleRecalc('Applying parameter changes...');
+    });
   });
 
   [
