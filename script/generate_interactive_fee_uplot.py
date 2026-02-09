@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,8 +52,9 @@ DEFAULT_UX_W_CLAMP = 0.05
 DEFAULT_UX_W_LEVEL = 0.40
 DEFAULT_SWEEP_KP_VALUES = [0.0, 0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60]
 DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]
-DEFAULT_SWEEP_KD_VALUES = [0.0, 1.0, 10.0]
-DEFAULT_SWEEP_MAX_BLOCKS = 120_000
+DEFAULT_SWEEP_KD_VALUES = [0.0]
+DEFAULT_SWEEP_I_MAX_VALUES = [5.0, 10.0, 100.0]
+DEFAULT_SWEEP_MAX_BLOCKS = 180_000
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -249,26 +251,10 @@ def read_time_anchor(
     return default
 
 
-def build_app_js(blocks, base, blob, time_anchor):
-    blocks_json = json.dumps(blocks, separators=(",", ":"))
-    base_json = json.dumps(base, separators=(",", ":"))
-    blob_json = json.dumps(blob, separators=(",", ":"))
-    has_anchor = "true" if time_anchor["has_anchor"] else "false"
-
+def build_app_js():
     return f"""(function () {{
-  const blocks = {blocks_json};
-  const baseFeeGwei = {base_json};
-  const blobFeeGwei = {blob_json};
-
-  const MIN_BLOCK = blocks[0];
-  const MAX_BLOCK = blocks[blocks.length - 1];
   const BLOB_GAS_PER_BLOB = {BLOB_GAS_PER_BLOB};
   const L1_BLOCK_TIME_SECONDS = {L1_BLOCK_TIME_SECONDS};
-  const HAS_BLOCK_TIME_ANCHOR = {has_anchor};
-  const BLOCK_TIME_APPROX_SECONDS = {time_anchor["seconds_per_block"]:.6f};
-  const ANCHOR_BLOCK = {int(time_anchor["anchor_block"])};
-  const ANCHOR_TIMESTAMP_SEC = {int(time_anchor["anchor_ts_sec"])};
-  const TIME_ANCHOR_SOURCE = {json.dumps(time_anchor["source"])};
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
   const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
@@ -277,7 +263,28 @@ def build_app_js(blocks, base, blob, time_anchor):
   const SWEEP_KP_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KP_VALUES)});
   const SWEEP_KI_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KI_VALUES)});
   const SWEEP_KD_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_KD_VALUES)});
+  const SWEEP_I_MAX_VALUES = Object.freeze({json.dumps(DEFAULT_SWEEP_I_MAX_VALUES)});
   const SWEEP_MAX_BLOCKS = {DEFAULT_SWEEP_MAX_BLOCKS};
+  const DATASET_MANIFEST = (window.__feeDatasetManifest && Array.isArray(window.__feeDatasetManifest.datasets))
+    ? window.__feeDatasetManifest.datasets.slice()
+    : [];
+  const DATASET_BY_ID = Object.create(null);
+  for (const meta of DATASET_MANIFEST) {{
+    if (meta && meta.id) DATASET_BY_ID[String(meta.id)] = meta;
+  }}
+
+  let activeDatasetId = null;
+  let blocks = [];
+  let baseFeeGwei = [];
+  let blobFeeGwei = [];
+  let MIN_BLOCK = 0;
+  let MAX_BLOCK = 1;
+  let HAS_BLOCK_TIME_ANCHOR = false;
+  let BLOCK_TIME_APPROX_SECONDS = L1_BLOCK_TIME_SECONDS;
+  let ANCHOR_BLOCK = 0;
+  let ANCHOR_TIMESTAMP_SEC = 0;
+  let TIME_ANCHOR_SOURCE = 'none';
+  let datasetReady = false;
 
   const minInput = document.getElementById('minBlock');
   const maxInput = document.getElementById('maxBlock');
@@ -285,6 +292,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const rangeDateText = document.getElementById('rangeDateText');
   const hoverText = document.getElementById('hoverText');
   const status = document.getElementById('status');
+  const datasetRangeInput = document.getElementById('datasetRange');
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
   const l2GasPerL2BlockInput = document.getElementById('l2GasPerL2Block');
@@ -378,7 +386,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const sweepBestAlphaVariant = document.getElementById('sweepBestAlphaVariant');
   const sweepBestKp = document.getElementById('sweepBestKp');
   const sweepBestKi = document.getElementById('sweepBestKi');
-  const sweepBestKd = document.getElementById('sweepBestKd');
+  const sweepBestImax = document.getElementById('sweepBestImax');
   const sweepBestHealth = document.getElementById('sweepBestHealth');
   const sweepBestUx = document.getElementById('sweepBestUx');
   const sweepBestTotal = document.getElementById('sweepBestTotal');
@@ -390,6 +398,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const baseWrap = document.getElementById('basePlot');
   const blobWrap = document.getElementById('blobPlot');
   const costWrap = document.getElementById('costPlot');
+  const proposalPLWrap = document.getElementById('proposalPLPlot');
   const reqWrap = document.getElementById('requiredFeePlot');
   const chargedOnlyWrap = document.getElementById('chargedFeeOnlyPlot');
   const controllerWrap = document.getElementById('controllerPlot');
@@ -399,6 +408,139 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   function setStatus(msg) {{
     status.textContent = msg || '';
+  }}
+
+  function getDatasetMeta(datasetId) {{
+    if (!datasetId) return null;
+    return DATASET_BY_ID[String(datasetId)] || null;
+  }}
+
+  function selectedDatasetFromQuery() {{
+    try {{
+      const params = new URLSearchParams(window.location.search || '');
+      const id = params.get('dataset');
+      return id ? String(id) : null;
+    }} catch (e) {{
+      return null;
+    }}
+  }}
+
+  function updateDatasetQuery(datasetId) {{
+    try {{
+      const url = new URL(window.location.href);
+      url.searchParams.set('dataset', String(datasetId));
+      window.history.replaceState(null, '', url.toString());
+    }} catch (e) {{
+      // ignore URL update failures
+    }}
+  }}
+
+  function setDatasetRangeOptions() {{
+    if (!datasetRangeInput) return;
+    if (!DATASET_MANIFEST.length) {{
+      datasetRangeInput.innerHTML = '';
+      return;
+    }}
+    datasetRangeInput.innerHTML = DATASET_MANIFEST.map(function (meta) {{
+      const label = meta && meta.label ? String(meta.label) : String(meta.id);
+      const id = meta && meta.id ? String(meta.id) : '';
+      return `<option value="${{id}}">${{label}}</option>`;
+    }}).join('');
+  }}
+
+  function ensureDatasetLoaded(datasetId) {{
+    const id = String(datasetId || '');
+    if (!id) return Promise.reject(new Error('missing dataset id'));
+    if (!window.__feeDatasetPayloads) window.__feeDatasetPayloads = Object.create(null);
+    const cached = window.__feeDatasetPayloads[id];
+    if (cached) return Promise.resolve(cached);
+
+    const meta = getDatasetMeta(id);
+    if (!meta || !meta.data_js) {{
+      return Promise.reject(new Error(`dataset metadata missing for "${{id}}"`));
+    }}
+
+    const scriptSrc = String(meta.data_js);
+    return new Promise(function (resolve, reject) {{
+      const tag = document.createElement('script');
+      tag.src = scriptSrc;
+      tag.async = true;
+      tag.onload = function () {{
+        const payload = window.__feeDatasetPayloads && window.__feeDatasetPayloads[id];
+        if (payload) resolve(payload);
+        else reject(new Error(`dataset payload not found after loading "${{scriptSrc}}"`));
+      }};
+      tag.onerror = function () {{
+        reject(new Error(`failed to load dataset script "${{scriptSrc}}"`));
+      }};
+      document.head.appendChild(tag);
+    }});
+  }}
+
+  async function activateDataset(datasetId, preserveRange = true) {{
+    const id = String(datasetId || '');
+    const meta = getDatasetMeta(id);
+    if (!meta) throw new Error(`unknown dataset "${{id}}"`);
+
+    const prevRange = datasetReady ? clampRange(minInput.value, maxInput.value) : null;
+    const payload = await ensureDatasetLoaded(id);
+    const payloadBlocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+    const payloadBase = Array.isArray(payload.baseFeeGwei) ? payload.baseFeeGwei : [];
+    const payloadBlob = Array.isArray(payload.blobFeeGwei) ? payload.blobFeeGwei : [];
+    if (!payloadBlocks.length || payloadBase.length !== payloadBlocks.length || payloadBlob.length !== payloadBlocks.length) {{
+      throw new Error(`invalid dataset payload for "${{id}}"`);
+    }}
+
+    blocks = payloadBlocks;
+    baseFeeGwei = payloadBase;
+    blobFeeGwei = payloadBlob;
+
+    MIN_BLOCK = blocks[0];
+    MAX_BLOCK = blocks[blocks.length - 1];
+
+    const anchor = payload.timeAnchor || {{}};
+    HAS_BLOCK_TIME_ANCHOR = Boolean(anchor.has_anchor);
+    BLOCK_TIME_APPROX_SECONDS = Number(anchor.seconds_per_block);
+    if (!Number.isFinite(BLOCK_TIME_APPROX_SECONDS) || BLOCK_TIME_APPROX_SECONDS <= 0) {{
+      BLOCK_TIME_APPROX_SECONDS = L1_BLOCK_TIME_SECONDS;
+    }}
+    ANCHOR_BLOCK = Number.isFinite(Number(anchor.anchor_block)) ? Number(anchor.anchor_block) : MIN_BLOCK;
+    ANCHOR_TIMESTAMP_SEC = Number.isFinite(Number(anchor.anchor_ts_sec)) ? Number(anchor.anchor_ts_sec) : 0;
+    TIME_ANCHOR_SOURCE = anchor.source ? String(anchor.source) : 'none';
+
+    activeDatasetId = id;
+    if (datasetRangeInput) datasetRangeInput.value = id;
+    updateDatasetQuery(id);
+
+    let nextMin = MIN_BLOCK;
+    let nextMax = MAX_BLOCK;
+    if (preserveRange && prevRange) {{
+      const clipped = clampRange(prevRange[0], prevRange[1]);
+      nextMin = clipped[0];
+      nextMax = clipped[1];
+    }}
+    minInput.value = nextMin;
+    maxInput.value = nextMax;
+
+    if (basePlot) basePlot.setData([blocks, baseFeeGwei]);
+    if (blobPlot) blobPlot.setData([blocks, blobFeeGwei]);
+
+    datasetReady = true;
+    markSweepStale('dataset changed');
+    recalcDerivedSeries();
+    applyRange(nextMin, nextMax, null);
+    setStatus(`Loaded dataset: ${{meta.label || id}}`);
+  }}
+
+  function resolveInitialDatasetId() {{
+    const fromQuery = selectedDatasetFromQuery();
+    if (fromQuery && getDatasetMeta(fromQuery)) return fromQuery;
+    const fromWindow = window.__feeInitialDatasetId ? String(window.__feeInitialDatasetId) : null;
+    if (fromWindow && getDatasetMeta(fromWindow)) return fromWindow;
+    if (DATASET_MANIFEST.length && DATASET_MANIFEST[0] && DATASET_MANIFEST[0].id) {{
+      return String(DATASET_MANIFEST[0].id);
+    }}
+    return null;
   }}
 
   function formatNum(x, frac = 4) {{
@@ -886,6 +1028,8 @@ def build_app_js(blocks, base, blob, time_anchor):
   let derivedFeedbackFeeGwei = [];
   let derivedChargedFeeGwei = [];
   let derivedPostingRevenueAtPostEth = [];
+  let derivedPostingPnLEth = [];
+  let derivedPostingPnLBlocks = [];
   let derivedPostBreakEvenFlag = [];
   let derivedDeficitEth = [];
   let derivedEpsilon = [];
@@ -935,6 +1079,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   }}
 
   function getSweepRangeIndices() {{
+    if (!datasetReady || !blocks.length) return null;
     const [minB, maxB] = clampRange(minInput.value, maxInput.value);
     const i0 = lowerBound(blocks, minB);
     const i1 = upperBound(blocks, maxB) - 1;
@@ -968,14 +1113,17 @@ def build_app_js(blocks, base, blob, time_anchor):
       for (const kp of SWEEP_KP_VALUES) {{
         for (const ki of SWEEP_KI_VALUES) {{
           for (const kd of SWEEP_KD_VALUES) {{
-            for (const alphaVariant of SWEEP_ALPHA_VARIANTS) {{
-              out.push({{
-                mode,
-                alphaVariant,
-                kp,
-                ki,
-                kd
-              }});
+            for (const iMax of SWEEP_I_MAX_VALUES) {{
+              for (const alphaVariant of SWEEP_ALPHA_VARIANTS) {{
+                out.push({{
+                  mode,
+                  alphaVariant,
+                  kp,
+                  ki,
+                  kd,
+                  iMax
+                }});
+              }}
             }}
           }}
         }}
@@ -985,6 +1133,10 @@ def build_app_js(blocks, base, blob, time_anchor):
   }}
 
   function recalcDerivedSeries() {{
+    if (!datasetReady || !blocks.length) {{
+      setStatus('Loading dataset...');
+      return;
+    }}
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
     const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
     const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
@@ -1071,6 +1223,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     derivedFeedbackFeeGwei = new Array(n);
     derivedChargedFeeGwei = new Array(n);
     derivedPostingRevenueAtPostEth = new Array(n);
+    derivedPostingPnLEth = new Array(n);
+    derivedPostingPnLBlocks = [];
     derivedPostBreakEvenFlag = new Array(n);
     derivedDeficitEth = new Array(n);
     derivedEpsilon = new Array(n);
@@ -1165,12 +1319,15 @@ def build_app_js(blocks, base, blob, time_anchor):
       if (posted) {{
         const postingRevenueEth = pendingRevenueEth;
         derivedPostingRevenueAtPostEth[i] = postingRevenueEth;
+        derivedPostingPnLEth[i] = postingRevenueEth - derivedPostingCostEth[i];
+        derivedPostingPnLBlocks.push(blocks[i]);
         derivedPostBreakEvenFlag[i] = postingRevenueEth + 1e-12 >= derivedPostingCostEth[i];
         vault += postingRevenueEth;
         pendingRevenueEth = 0;
         vault -= derivedPostingCostEth[i];
       }} else {{
         derivedPostingRevenueAtPostEth[i] = null;
+        derivedPostingPnLEth[i] = null;
         derivedPostBreakEvenFlag[i] = null;
       }}
 
@@ -1181,9 +1338,19 @@ def build_app_js(blocks, base, blob, time_anchor):
 
     const preservedRange = getCurrentXRange();
 
-    if (l2GasPlot && costPlot && requiredFeePlot && chargedFeeOnlyPlot && controllerPlot && feedbackPlot && vaultPlot) {{
+    if (l2GasPlot && costPlot && proposalPLPlot && requiredFeePlot && chargedFeeOnlyPlot && controllerPlot && feedbackPlot && vaultPlot) {{
       l2GasPlot.setData([blocks, derivedL2GasPerL2Block, derivedL2GasPerL2BlockBase]);
       costPlot.setData([blocks, derivedGasCostEth, derivedBlobCostEth, derivedPostingCostEth]);
+      const proposalPnLValues = [];
+      for (let i = 0; i < derivedPostingPnLEth.length; i++) {{
+        const v = derivedPostingPnLEth[i];
+        if (v != null) proposalPnLValues.push(v);
+      }}
+      proposalPLPlot.setData([
+        derivedPostingPnLBlocks,
+        proposalPnLValues,
+        new Array(proposalPnLValues.length).fill(0)
+      ]);
       requiredFeePlot.setData([
         blocks,
         derivedGasFeeComponentGwei,
@@ -1339,8 +1506,9 @@ def build_app_js(blocks, base, blob, time_anchor):
       const observedVault = fbLocal >= 0 ? vaultSeries[fbLocal] : simCfg.initialVaultEth;
       const deficitEth = simCfg.targetVaultEth - observedVault;
       const epsilon = targetDenom > 0 ? (deficitEth / targetDenom) : 0;
+      const iMaxSweep = Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax;
       if (modeFlags.usesI) {{
-        integralState = clampNum(integralState + epsilon, simCfg.iMin, simCfg.iMax);
+        integralState = clampNum(integralState + epsilon, simCfg.iMin, iMaxSweep);
       }} else {{
         integralState = 0;
       }}
@@ -1462,6 +1630,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       kp: candidate.kp,
       ki: candidate.ki,
       kd: candidate.kd,
+      iMax: Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax,
       nBlocks: n,
       healthBadness,
       uxBadness,
@@ -1490,7 +1659,8 @@ def build_app_js(blocks, base, blob, time_anchor):
         r.alphaVariant === best.alphaVariant &&
         r.kp === best.kp &&
         r.ki === best.ki &&
-        r.kd === best.kd
+        r.kd === best.kd &&
+        r.iMax === best.iMax
       );
       points.push({{
         ux: r.uxBadness,
@@ -1503,6 +1673,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         kp: r.kp,
         ki: r.ki,
         kd: r.kd,
+        iMax: r.iMax,
         isBest,
         isCurrent: false
       }});
@@ -1523,6 +1694,7 @@ def build_app_js(blocks, base, blob, time_anchor):
         kp: currentPoint.kp,
         ki: currentPoint.ki,
         kd: currentPoint.kd,
+        iMax: currentPoint.iMax,
         isBest: false,
         isCurrent: true
       }});
@@ -1587,7 +1759,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const tagText = tagParts.length ? ` (${{tagParts.join(', ')}})` : '';
     setSweepHoverText(
       `Hover point ${{rankPart}}${{tagText}}: mode=${{p.mode}}, alpha=${{p.alphaVariant}}, ` +
-      `Kp=${{formatNum(p.kp, 4)}}, Ki=${{formatNum(p.ki, 4)}}, Kd=${{formatNum(p.kd, 4)}}, ` +
+      `Kp=${{formatNum(p.kp, 4)}}, Ki=${{formatNum(p.ki, 4)}}, Kd=${{formatNum(p.kd, 4)}}, Imax=${{formatNum(p.iMax, 4)}}, ` +
       `health=${{formatNum(p.health, 6)}}, UX=${{formatNum(p.ux, 6)}}, total=${{formatNum(p.total, 6)}}`
     );
   }}
@@ -1685,7 +1857,8 @@ def build_app_js(blocks, base, blob, time_anchor):
           alphaBlob: useZeroAlpha ? 0 : alphaBlobFixed,
           kp: cand.kp,
           ki: cand.ki,
-          kd: cand.kd
+          kd: cand.kd,
+          iMax: cand.iMax
         }},
         simCfg,
         scoreCfg
@@ -1725,7 +1898,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = sweepBestCandidate.alphaVariant || 'current';
     if (sweepBestKp) sweepBestKp.textContent = formatNum(sweepBestCandidate.kp, 4);
     if (sweepBestKi) sweepBestKi.textContent = formatNum(sweepBestCandidate.ki, 4);
-    if (sweepBestKd) sweepBestKd.textContent = formatNum(sweepBestCandidate.kd, 4);
+    if (sweepBestImax) sweepBestImax.textContent = formatNum(sweepBestCandidate.iMax, 4);
     if (sweepBestHealth) sweepBestHealth.textContent = formatNum(sweepBestCandidate.healthBadness, 6);
     if (sweepBestUx) sweepBestUx.textContent = formatNum(sweepBestCandidate.uxBadness, 6);
     if (sweepBestTotal) sweepBestTotal.textContent = formatNum(sweepBestCandidate.totalBadness, 6);
@@ -1759,25 +1932,24 @@ def build_app_js(blocks, base, blob, time_anchor):
     kpInput.value = `${{sweepBestCandidate.kp}}`;
     kiInput.value = `${{sweepBestCandidate.ki}}`;
     kdInput.value = `${{sweepBestCandidate.kd}}`;
+    iMaxInput.value = `${{sweepBestCandidate.iMax}}`;
     recalcDerivedSeries();
     scoreCurrentRangeNow();
   }}
-
-  minInput.value = MIN_BLOCK;
-  maxInput.value = MAX_BLOCK;
 
   if (!window.uPlot) {{
     setStatus('uPlot failed to load. Open this file from its folder so local JS files resolve.');
     return;
   }}
 
-  setStatus('Rendering charts...');
+  setStatus('Preparing charts...');
 
   let syncing = false;
   let basePlot;
   let blobPlot;
   let l2GasPlot;
   let costPlot;
+  let proposalPLPlot;
   let requiredFeePlot;
   let chargedFeeOnlyPlot;
   let controllerPlot;
@@ -1790,6 +1962,7 @@ def build_app_js(blocks, base, blob, time_anchor):
       blobPlot,
       l2GasPlot,
       costPlot,
+      proposalPLPlot,
       requiredFeePlot,
       chargedFeeOnlyPlot,
       controllerPlot,
@@ -1859,6 +2032,42 @@ def build_app_js(blocks, base, blob, time_anchor):
       axes: [
         {{ label: 'L1 Block Number' }},
         {{ label: 'ETH' }}
+      ],
+      cursor: {{
+        drag: {{ x: true, y: false, setScale: true }}
+      }},
+      hooks: {{
+        setScale: [onSetScale],
+        setCursor: [onSetCursor]
+      }}
+    }};
+  }}
+
+  function makeProposalPLOpts(width, height) {{
+    return {{
+      title: 'Per-Proposal P/L (revenue - posting cost)',
+      width,
+      height,
+      scales: {{ x: {{ time: false }} }},
+      series: [
+        {{ value: function (u, v) {{ return formatBlockWithApprox(v); }} }},
+        {{
+          label: 'Proposal P/L (ETH)',
+          stroke: '#d97706',
+          width: 0,
+          points: {{ show: true, size: 4, stroke: '#b45309', fill: '#f59e0b' }},
+          value: function (u, v) {{ return formatNum(v, 9); }}
+        }},
+        {{
+          label: 'Break-even line (ETH)',
+          stroke: '#64748b',
+          width: 1,
+          value: function (u, v) {{ return formatNum(v, 6); }}
+        }}
+      ],
+      axes: [
+        {{ label: 'L1 Block Number' }},
+        {{ label: 'ETH / proposal' }}
       ],
       cursor: {{
         drag: {{ x: true, y: false, setScale: true }}
@@ -2057,6 +2266,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   }}
 
   function applyRange(minVal, maxVal, sourcePlot) {{
+    if (!datasetReady || !blocks.length) return;
     const [minB, maxB] = clampRange(minVal, maxVal);
     minInput.value = minB;
     maxInput.value = maxB;
@@ -2086,13 +2296,13 @@ def build_app_js(blocks, base, blob, time_anchor):
 
   basePlot = new uPlot(
     makeOpts('L1 Base Fee', 'gwei', '#1d4ed8', width, 320),
-    [blocks, baseFeeGwei],
+    [[], []],
     baseWrap
   );
 
   blobPlot = new uPlot(
     makeOpts('L1 Blob Base Fee', 'gwei', '#ea580c', width, 320),
-    [blocks, blobFeeGwei],
+    [[], []],
     blobWrap
   );
 
@@ -2119,43 +2329,49 @@ def build_app_js(blocks, base, blob, time_anchor):
         setCursor: [onSetCursor]
       }}
     }},
-    [blocks, [], []],
+    [[], [], []],
     l2GasWrap
   );
 
   costPlot = new uPlot(
     makeCostOpts(width, 320),
-    [blocks, [], [], []],
+    [[], [], [], []],
     costWrap
+  );
+
+  proposalPLPlot = new uPlot(
+    makeProposalPLOpts(width, 320),
+    [[], [], []],
+    proposalPLWrap
   );
 
   requiredFeePlot = new uPlot(
     makeRequiredFeeOpts(width, 320),
-    [blocks, [], [], []],
+    [[], [], [], []],
     reqWrap
   );
 
   chargedFeeOnlyPlot = new uPlot(
     makeChargedFeeOnlyOpts(width, 320),
-    [blocks, []],
+    [[], []],
     chargedOnlyWrap
   );
 
   controllerPlot = new uPlot(
     makeControllerOpts(width, 320),
-    [blocks, [], [], [], [], [], []],
+    [[], [], [], [], [], [], []],
     controllerWrap
   );
 
   feedbackPlot = new uPlot(
     makeFeedbackOpts(width, 320),
-    [blocks, [], [], [], []],
+    [[], [], [], [], []],
     feedbackWrap
   );
 
   vaultPlot = new uPlot(
     makeVaultOpts(width, 320),
-    [blocks, [], []],
+    [[], [], []],
     vaultWrap
   );
 
@@ -2165,11 +2381,13 @@ def build_app_js(blocks, base, blob, time_anchor):
     sweepWrap
   );
 
-  recalcDerivedSeries();
   setSweepUiState(false);
-  setSweepStatus('Sweep idle. Sweeps Kp/Ki/Kd across pdi + pdi+ff and alpha variants (current, zero).');
+  setSweepStatus('Sweep idle. Sweeps Kp/Ki/Imax across pdi + pdi+ff with Kd fixed at 0 and alpha variants (current, zero).');
   setSweepHoverText('Hover point: -');
-  updateRangeText(MIN_BLOCK, MAX_BLOCK);
+  minInput.value = '';
+  maxInput.value = '';
+  if (rangeText) rangeText.textContent = 'Loading dataset...';
+  if (rangeDateText) rangeDateText.textContent = '';
 
   document.getElementById('applyBtn').addEventListener('click', function () {{
     applyRange(minInput.value, maxInput.value, null);
@@ -2328,20 +2546,50 @@ def build_app_js(blocks, base, blob, time_anchor):
     resizeTimer = setTimeout(resizePlots, 120);
   }});
 
+  if (datasetRangeInput) {{
+    datasetRangeInput.addEventListener('change', async function () {{
+      const nextId = datasetRangeInput.value ? String(datasetRangeInput.value) : '';
+      if (!nextId || nextId === activeDatasetId) return;
+      try {{
+        setStatus(`Switching dataset to "${{nextId}}"...`);
+        await activateDataset(nextId, true);
+      }} catch (err) {{
+        setStatus(`Dataset switch failed: ${{err && err.message ? err.message : err}}`);
+      }}
+    }});
+  }}
+
+  async function initDatasets() {{
+    setDatasetRangeOptions();
+    const initialId = resolveInitialDatasetId();
+    if (!initialId) {{
+      setStatus('No dataset configured. Regenerate with --dataset entries.');
+      return;
+    }}
+    try {{
+      setStatus(`Loading dataset "${{initialId}}"...`);
+      await activateDataset(initialId, false);
+    }} catch (err) {{
+      setStatus(`Dataset load failed: ${{err && err.message ? err.message : err}}`);
+    }}
+  }}
+
   markScoreStale('not computed yet');
-  setStatus('');
+  initDatasets();
 }})();
 """
 
 
-def build_html(title, js_filename, current_html_name=None, range_options=None):
-    range_options = range_options or []
-    current_html_name = current_html_name or ""
+def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None):
+    dataset_options = dataset_options or []
+    initial_dataset_id = initial_dataset_id or (dataset_options[0]["id"] if dataset_options else "")
     range_selector_html = ""
-    if range_options:
+    if dataset_options:
         opts = []
-        for value, label in range_options:
-            selected = " selected" if value == current_html_name else ""
+        for item in dataset_options:
+            value = item["id"]
+            label = item["label"]
+            selected = " selected" if value == initial_dataset_id else ""
             opts.append(f'<option value="{value}"{selected}>{label}</option>')
         options_html = "\n".join(opts)
         range_selector_html = f"""
@@ -2353,6 +2601,19 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           </label>
         </div>
 """
+
+    manifest = {
+        "datasets": [
+            {
+                "id": item["id"],
+                "label": item["label"],
+                "data_js": item["data_js"],
+            }
+            for item in dataset_options
+        ]
+    }
+    manifest_json = json.dumps(manifest, separators=(",", ":"))
+    initial_json = json.dumps(initial_dataset_id)
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -2723,7 +2984,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>UX fee step max: <strong id=\"uxFeeStepMax\">-</strong></span>
           </div>
           <div class=\"assumptions-title\">Parameter Sweep</div>
-          <div class=\"formula\">Sweep modes are fixed to pdi + pdi+ff; swept params are alpha variant (current/zero), Kp, Ki, Kd.</div>
+          <div class=\"formula\">Sweep modes are fixed to pdi + pdi+ff; swept params are alpha variant (current/zero), Kp, Ki, I max (Kd fixed at 0).</div>
           <div class=\"controls\">
             <button class=\"primary\" id=\"sweepBtn\">Run parameter sweep</button>
             <button id=\"sweepCancelBtn\" disabled>Cancel sweep</button>
@@ -2740,7 +3001,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <span>Best alpha: <strong id=\"sweepBestAlphaVariant\">-</strong></span>
             <span>Best Kp: <strong id=\"sweepBestKp\">-</strong></span>
             <span>Best Ki: <strong id=\"sweepBestKi\">-</strong></span>
-            <span>Best Kd: <strong id=\"sweepBestKd\">-</strong></span>
+            <span>Best I max: <strong id=\"sweepBestImax\">-</strong></span>
             <span>Best health badness: <strong id=\"sweepBestHealth\">-</strong></span>
             <span>Best UX badness: <strong id=\"sweepBestUx\">-</strong></span>
             <span>Best total badness: <strong id=\"sweepBestTotal\">-</strong></span>
@@ -2756,6 +3017,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
         <div id=\"blobPlot\" class=\"plot\"></div>
         <div id=\"l2GasPlot\" class=\"plot\"></div>
         <div id=\"costPlot\" class=\"plot\"></div>
+        <div id=\"proposalPLPlot\" class=\"plot\"></div>
         <div id=\"requiredFeePlot\" class=\"plot\"></div>
         <div id=\"chargedFeeOnlyPlot\" class=\"plot\"></div>
         <div id=\"controllerPlot\" class=\"plot\"></div>
@@ -2798,14 +3060,8 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
   </div>
 
   <script>
-    (function () {{
-      var rangeSel = document.getElementById('datasetRange');
-      if (!rangeSel) return;
-      rangeSel.addEventListener('change', function () {{
-        var target = rangeSel.value;
-        if (target) window.location.href = target;
-      }});
-    }})();
+    window.__feeDatasetManifest = {manifest_json};
+    window.__feeInitialDatasetId = {initial_json};
   </script>
   <script src=\"./uPlot.iife.min.js\"></script>
   <script src=\"./{js_filename}\"></script>
@@ -2814,11 +3070,48 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
 """
 
 
+def sanitize_dataset_id(dataset_id: str):
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", dataset_id.strip())
+    return cleaned or "dataset"
+
+
+def build_dataset_payload_js(dataset_id, blocks, base, blob, time_anchor):
+    payload = {
+        "blocks": blocks,
+        "baseFeeGwei": base,
+        "blobFeeGwei": blob,
+        "timeAnchor": time_anchor,
+    }
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    dataset_id_json = json.dumps(str(dataset_id))
+    return f"""(function () {{
+  if (!window.__feeDatasetPayloads) {{
+    window.__feeDatasetPayloads = Object.create(null);
+  }}
+  window.__feeDatasetPayloads[{dataset_id_json}] = {payload_json};
+}})();
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate interactive uPlot HTML for fee history")
-    parser.add_argument("--csv", required=True, help="Path to fee history CSV")
+    parser.add_argument(
+        "--csv",
+        help="Path to fee history CSV (legacy single-dataset mode if --dataset is not provided)",
+    )
+    parser.add_argument(
+        "--dataset",
+        action="append",
+        default=[],
+        help="Dataset spec in the form '<id>|<label>|<csv_path>' (repeatable)",
+    )
+    parser.add_argument(
+        "--initial-dataset",
+        default=None,
+        help="Dataset id to select on page load (defaults to first dataset)",
+    )
     parser.add_argument("--out-html", required=True, help="Output HTML path")
-    parser.add_argument("--out-js", required=True, help="Output JS path")
+    parser.add_argument("--out-js", required=True, help="Output app JS path")
     parser.add_argument("--title", default="Ethereum + L2 Posting Cost Explorer", help="Page title")
     parser.add_argument(
         "--rpc",
@@ -2839,38 +3132,100 @@ def main():
         "--range-option",
         action="append",
         default=[],
-        help="Optional range switcher option in the form '<html_filename>|<label>'",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
 
-    csv_path = Path(args.csv).resolve()
     out_html = Path(args.out_html).resolve()
     out_js = Path(args.out_js).resolve()
-
-    blocks, base, blob = read_fee_csv(csv_path)
     cache_path = Path(args.timestamp_cache).resolve() if args.timestamp_cache else None
     ts_cache = load_timestamp_cache(cache_path)
     rpc_url = None if args.no_rpc_anchor else args.rpc
-    time_anchor = read_time_anchor(csv_path, blocks[0], blocks[-1], rpc_url, ts_cache)
-    save_timestamp_cache(cache_path, ts_cache)
 
     out_html.parent.mkdir(parents=True, exist_ok=True)
     out_js.parent.mkdir(parents=True, exist_ok=True)
 
-    out_js.write_text(build_app_js(blocks, base, blob, time_anchor))
-    range_options = []
-    for opt in args.range_option:
-        if "|" in opt:
-            value, label = opt.split("|", 1)
-            value = value.strip()
-            label = label.strip()
-            if value and label:
-                range_options.append((value, label))
+    dataset_specs = []
+    if args.dataset:
+        for raw in args.dataset:
+            parts = raw.split("|", 2)
+            if len(parts) != 3:
+                parser.error(
+                    f"Invalid --dataset value '{raw}'. Expected '<id>|<label>|<csv_path>'."
+                )
+            dataset_id, label, csv_raw = (parts[0].strip(), parts[1].strip(), parts[2].strip())
+            if not dataset_id or not label or not csv_raw:
+                parser.error(
+                    f"Invalid --dataset value '{raw}'. id, label, and csv_path must be non-empty."
+                )
+            dataset_specs.append(
+                {
+                    "id": dataset_id,
+                    "label": label,
+                    "csv_path": Path(csv_raw).resolve(),
+                }
+            )
+    else:
+        if not args.csv:
+            parser.error("Provide --csv for single-dataset mode or at least one --dataset.")
+        csv_path = Path(args.csv).resolve()
+        dataset_specs.append(
+            {
+                "id": "default",
+                "label": "Default range",
+                "csv_path": csv_path,
+            }
+        )
 
-    out_html.write_text(build_html(args.title, out_js.name, out_html.name, range_options))
+    ids = [spec["id"] for spec in dataset_specs]
+    if len(set(ids)) != len(ids):
+        parser.error("Duplicate dataset ids are not allowed.")
+
+    initial_dataset_id = args.initial_dataset.strip() if args.initial_dataset else None
+    if initial_dataset_id and initial_dataset_id not in set(ids):
+        parser.error(
+            f"--initial-dataset '{initial_dataset_id}' does not match any dataset id: {', '.join(ids)}"
+        )
+    if not initial_dataset_id:
+        initial_dataset_id = dataset_specs[0]["id"]
+
+    dataset_options = []
+    written_payloads = []
+    used_payload_names = set()
+    for spec in dataset_specs:
+        blocks, base, blob = read_fee_csv(spec["csv_path"])
+        time_anchor = read_time_anchor(spec["csv_path"], blocks[0], blocks[-1], rpc_url, ts_cache)
+
+        safe_id = sanitize_dataset_id(spec["id"])
+        payload_name = f"{out_js.stem}_data_{safe_id}.js"
+        if payload_name in used_payload_names:
+            parser.error(
+                f"Dataset id collision after sanitization for '{spec['id']}'. "
+                "Please use distinct ids."
+            )
+        used_payload_names.add(payload_name)
+        payload_path = out_js.parent / payload_name
+        payload_path.write_text(
+            build_dataset_payload_js(spec["id"], blocks, base, blob, time_anchor)
+        )
+        written_payloads.append(payload_path)
+        dataset_options.append(
+            {
+                "id": spec["id"],
+                "label": spec["label"],
+                "data_js": payload_name,
+            }
+        )
+
+    save_timestamp_cache(cache_path, ts_cache)
+
+    out_js.write_text(build_app_js())
+    out_html.write_text(build_html(args.title, out_js.name, dataset_options, initial_dataset_id))
 
     print(out_html)
     print(out_js)
+    for payload_path in written_payloads:
+        print(payload_path)
 
 
 if __name__ == "__main__":
