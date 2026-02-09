@@ -302,7 +302,7 @@
           <div class="formula">posting events at (i + 1) % postEveryBlocks == 0; revenue is settled to vault at post time</div>
           <div class="metrics">
             <span>Latest hypothetical posting cost: <strong id="latestPostingCost">-</strong></span>
-            <span>Latest required L2 fee (cost-side reference): <strong id="latestRequiredFee">-</strong></span>
+            <span>Latest break-even L2 fee (cost-side reference): <strong id="latestRequiredFee">-</strong></span>
             <span>Latest charged L2 fee: <strong id="latestChargedFee">-</strong></span>
             <span>Latest gas component fee: <strong id="latestGasComponentFee">-</strong></span>
             <span>Latest blob component fee: <strong id="latestBlobComponentFee">-</strong></span>
@@ -347,6 +347,7 @@
           <div class="score-kpis">
             <div class="score-kpi"><div class="score-kpi-label">Fee std</div><div class="score-kpi-value" id="uxFeeStd">-</div></div>
             <div class="score-kpi"><div class="score-kpi-label">Fee step p95</div><div class="score-kpi-value" id="uxFeeStepP95">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">Fee premium vs break-even (mean)</div><div class="score-kpi-value" id="uxFeeLevelMean">-</div></div>
             <div class="score-kpi"><div class="score-kpi-label">Clamp-max ratio</div><div class="score-kpi-value" id="uxClampMaxRatio">-</div></div>
           </div>
           <div class="assumptions-title">Score Weights (Detailed)</div>
@@ -361,6 +362,7 @@
             <label>UX w_p99 <input id="uxWP99" type="number" min="0" step="0.01" value="0.2" /></label>
             <label>UX w_maxStep <input id="uxWMaxStep" type="number" min="0" step="0.01" value="0.1" /></label>
             <label>UX w_clamp <input id="uxWClamp" type="number" min="0" step="0.01" value="0.1" /></label>
+            <label>UX w_level <input id="uxWLevel" type="number" min="0" step="0.01" value="0.2" /></label>
           </div>
           <div class="formula" id="scoreWeightSummary">overall weights: -</div>
           <div class="formula" id="healthFormulaLine">health_badness = -</div>
@@ -433,12 +435,13 @@
           <li><code>dGap</code>: absolute final vault-target gap, normalized by target</li>
           <li><code>dStreak</code>: longest consecutive under-target run, normalized by range length</li>
         </ul>
-        <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp)</code></p>
+        <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp, uLevel)</code></p>
         <ul>
           <li><code>uStd</code>: fee standard deviation, normalized by max fee</li>
           <li><code>uP95</code>/<code>uP99</code>: p95/p99 absolute fee step size, normalized by max fee</li>
           <li><code>uMax</code>: max absolute fee step, normalized by max fee</li>
           <li><code>uClamp</code>: fraction of blocks clamped at max fee</li>
+          <li><code>uLevel</code>: average premium above break-even fee, normalized by break-even mean</li>
         </ul>
         <p>Use the weight inputs to emphasize protocol health vs user UX, then click <strong>Score current range</strong>.</p>
       </div>

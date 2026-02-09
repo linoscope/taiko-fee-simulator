@@ -47,6 +47,7 @@ DEFAULT_UX_W_P95 = 0.30
 DEFAULT_UX_W_P99 = 0.20
 DEFAULT_UX_W_MAXSTEP = 0.10
 DEFAULT_UX_W_CLAMP = 0.10
+DEFAULT_UX_W_LEVEL = 0.20
 DEFAULT_SWEEP_KP_VALUES = [0.0, 0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60]
 DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]
 DEFAULT_SWEEP_KD_VALUES = [0.0, 1.0, 10.0]
@@ -322,6 +323,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const uxWP99Input = document.getElementById('uxWP99');
   const uxWMaxStepInput = document.getElementById('uxWMaxStep');
   const uxWClampInput = document.getElementById('uxWClamp');
+  const uxWLevelInput = document.getElementById('uxWLevel');
 
   const derivedL2GasPerL1BlockText = document.getElementById('derivedL2GasPerL1Block');
   const derivedL2GasPerProposalText = document.getElementById('derivedL2GasPerProposal');
@@ -355,6 +357,7 @@ def build_app_js(blocks, base, blob, time_anchor):
   const uxFeeStepP99 = document.getElementById('uxFeeStepP99');
   const uxFeeStepMax = document.getElementById('uxFeeStepMax');
   const uxClampMaxRatio = document.getElementById('uxClampMaxRatio');
+  const uxFeeLevelMean = document.getElementById('uxFeeLevelMean');
   const healthFormulaLine = document.getElementById('healthFormulaLine');
   const uxFormulaLine = document.getElementById('uxFormulaLine');
   const totalFormulaLine = document.getElementById('totalFormulaLine');
@@ -603,6 +606,8 @@ def build_app_js(blocks, base, blob, time_anchor):
 
     let feeSum = 0;
     let feeSqSum = 0;
+    let breakEvenFeeSum = 0;
+    let breakEvenFeeCount = 0;
     const feeSteps = [];
     let maxStep = 0;
 
@@ -628,6 +633,11 @@ def build_app_js(blocks, base, blob, time_anchor):
       const fee = derivedChargedFeeGwei[i];
       feeSum += fee;
       feeSqSum += fee * fee;
+      const breakEvenFee = derivedRequiredFeeGwei[i];
+      if (breakEvenFee != null && Number.isFinite(breakEvenFee)) {{
+        breakEvenFeeSum += breakEvenFee;
+        breakEvenFeeCount += 1;
+      }}
       if (i > i0) {{
         const step = Math.abs(fee - derivedChargedFeeGwei[i - 1]);
         feeSteps.push(step);
@@ -641,6 +651,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const stepP95 = percentile(feeSteps, 95);
     const stepP99 = percentile(feeSteps, 99);
     const clampMaxRatio = clampMaxCount / n;
+    const breakEvenFeeMean = breakEvenFeeCount > 0 ? (breakEvenFeeSum / breakEvenFeeCount) : 0;
     const underTargetRatio = underCount / n;
 
     const finalGapEth = derivedVaultEth[i1] - derivedVaultTargetEth[i1];
@@ -657,6 +668,9 @@ def build_app_js(blocks, base, blob, time_anchor):
     const uP99 = stepP99 / feeScale;
     const uMax = maxStep / feeScale;
     const uClamp = clampMaxRatio;
+    const uLevel = breakEvenFeeMean > 0
+      ? Math.max(0, feeMean - breakEvenFeeMean) / breakEvenFeeMean
+      : 0;
 
     const wDraw = parseWeight(healthWDrawInput, {DEFAULT_HEALTH_W_DRAW});
     const wUnder = parseWeight(healthWUnderInput, {DEFAULT_HEALTH_W_UNDER});
@@ -669,6 +683,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const wP99 = parseWeight(uxWP99Input, {DEFAULT_UX_W_P99});
     const wMax = parseWeight(uxWMaxStepInput, {DEFAULT_UX_W_MAXSTEP});
     const wClamp = parseWeight(uxWClampInput, {DEFAULT_UX_W_CLAMP});
+    const wLevel = parseWeight(uxWLevelInput, {DEFAULT_UX_W_LEVEL});
 
     const wHealth = parseWeight(scoreWeightHealthInput, {DEFAULT_HEALTH_WEIGHT});
     const wUx = parseWeight(scoreWeightUxInput, {DEFAULT_UX_WEIGHT});
@@ -678,8 +693,8 @@ def build_app_js(blocks, base, blob, time_anchor):
       [wDraw, wUnder, wArea, wGap, wStreak]
     );
     const uxBadness = normalizedWeightedSum(
-      [uStd, uP95, uP99, uMax, uClamp],
-      [wStd, wP95, wP99, wMax, wClamp]
+      [uStd, uP95, uP99, uMax, uClamp, uLevel],
+      [wStd, wP95, wP99, wMax, wClamp, wLevel]
     );
     const totalBadness = normalizedWeightedSum([healthBadness, uxBadness], [wHealth, wUx]);
 
@@ -700,13 +715,14 @@ def build_app_js(blocks, base, blob, time_anchor):
     uxFeeStepP99.textContent = `${{formatNum(stepP99, 6)}} gwei/L2gas`;
     uxFeeStepMax.textContent = `${{formatNum(maxStep, 6)}} gwei/L2gas`;
     uxClampMaxRatio.textContent = `${{formatNum(clampMaxRatio, 4)}}`;
+    uxFeeLevelMean.textContent = `${{formatNum(uLevel, 4)}}`;
 
     healthFormulaLine.textContent =
       `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wGap*dGap + wStreak*dStreak ` +
       `(dDraw=${{formatNum(dDraw, 4)}}, dUnder=${{formatNum(dUnder, 4)}}, dArea=${{formatNum(dArea, 4)}}, dGap=${{formatNum(dGap, 4)}}, dStreak=${{formatNum(dStreak, 4)}})`;
     uxFormulaLine.textContent =
-      `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp ` +
-      `(uStd=${{formatNum(uStd, 4)}}, uP95=${{formatNum(uP95, 4)}}, uP99=${{formatNum(uP99, 4)}}, uMax=${{formatNum(uMax, 4)}}, uClamp=${{formatNum(uClamp, 4)}})`;
+      `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp + wLevel*uLevel ` +
+      `(uStd=${{formatNum(uStd, 4)}}, uP95=${{formatNum(uP95, 4)}}, uP99=${{formatNum(uP99, 4)}}, uMax=${{formatNum(uMax, 4)}}, uClamp=${{formatNum(uClamp, 4)}}, uLevel=${{formatNum(uLevel, 4)}})`;
     totalFormulaLine.textContent =
       `total_badness = wHealth*health_badness + wUx*ux_badness = ${{formatNum(totalBadness, 6)}} ` +
       `(deadband=${{formatNum(deadbandPct, 2)}}%, blocks=${{n.toLocaleString()}})`;
@@ -924,7 +940,8 @@ def build_app_js(blocks, base, blob, time_anchor):
       wP95: parseWeight(uxWP95Input, {DEFAULT_UX_W_P95}),
       wP99: parseWeight(uxWP99Input, {DEFAULT_UX_W_P99}),
       wMaxStep: parseWeight(uxWMaxStepInput, {DEFAULT_UX_W_MAXSTEP}),
-      wClamp: parseWeight(uxWClampInput, {DEFAULT_UX_W_CLAMP})
+      wClamp: parseWeight(uxWClampInput, {DEFAULT_UX_W_CLAMP}),
+      wLevel: parseWeight(uxWLevelInput, {DEFAULT_UX_W_LEVEL})
     }};
   }}
 
@@ -1270,6 +1287,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     let feeSum = 0;
     let feeSumSq = 0;
     let feeCount = 0;
+    let breakEvenFeeSum = 0;
+    let breakEvenFeeCount = 0;
     let clampMaxCount = 0;
     let maxDrawdownEth = 0;
     let underTargetCount = 0;
@@ -1328,6 +1347,13 @@ def build_app_js(blocks, base, blob, time_anchor):
       if (feePrev != null) feeSteps.push(Math.abs(chargedFeeGwei - feePrev));
       feePrev = chargedFeeGwei;
 
+      const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
+      if (l2GasPerProposal_i > 0) {{
+        const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
+        breakEvenFeeSum += breakEvenFeeWeiPerL2Gas / 1e9;
+        breakEvenFeeCount += 1;
+      }}
+
       const l2RevenueEthPerBlock =
         (chargedFeeWeiPerL2Gas * simCfg.l2GasPerL1BlockSeries[i]) / 1e18;
       pendingRevenueEth += l2RevenueEthPerBlock;
@@ -1366,6 +1392,7 @@ def build_app_js(blocks, base, blob, time_anchor):
     const stepP99 = percentile(feeSteps, 99);
     const maxStep = feeSteps.length ? Math.max.apply(null, feeSteps) : 0;
     const clampMaxRatio = n > 0 ? (clampMaxCount / n) : 0;
+    const breakEvenFeeMean = breakEvenFeeCount > 0 ? (breakEvenFeeSum / breakEvenFeeCount) : 0;
 
     const dDraw = maxDrawdownEth / targetDenom;
     const dUnder = underTargetRatio;
@@ -1382,9 +1409,12 @@ def build_app_js(blocks, base, blob, time_anchor):
     const uP99 = stepP99 / feeDenom;
     const uMax = maxStep / feeDenom;
     const uClamp = clampMaxRatio;
+    const uLevel = breakEvenFeeMean > 0
+      ? Math.max(0, meanFee - breakEvenFeeMean) / breakEvenFeeMean
+      : 0;
     const uxBadness = normalizedWeightedSum(
-      [uStd, uP95, uP99, uMax, uClamp],
-      [scoreCfg.wStd, scoreCfg.wP95, scoreCfg.wP99, scoreCfg.wMaxStep, scoreCfg.wClamp]
+      [uStd, uP95, uP99, uMax, uClamp, uLevel],
+      [scoreCfg.wStd, scoreCfg.wP95, scoreCfg.wP99, scoreCfg.wMaxStep, scoreCfg.wClamp, scoreCfg.wLevel]
     );
 
     const totalBadness = normalizedWeightedSum(
@@ -1411,7 +1441,8 @@ def build_app_js(blocks, base, blob, time_anchor):
       stepP95,
       stepP99,
       maxStep,
-      clampMaxRatio
+      clampMaxRatio,
+      uLevel
     }};
   }}
 
@@ -2244,7 +2275,8 @@ def build_app_js(blocks, base, blob, time_anchor):
     uxWP95Input,
     uxWP99Input,
     uxWMaxStepInput,
-    uxWClampInput
+    uxWClampInput,
+    uxWLevelInput
   ].forEach(function (el) {{
     el.addEventListener('keydown', function (e) {{
       if (e.key === 'Enter') {{
@@ -2582,7 +2614,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           <div class=\"formula\">posting events at (i + 1) % postEveryBlocks == 0; revenue is settled to vault at post time</div>
           <div class=\"metrics\">
             <span>Latest hypothetical posting cost: <strong id=\"latestPostingCost\">-</strong></span>
-            <span>Latest required L2 fee (cost-side reference): <strong id=\"latestRequiredFee\">-</strong></span>
+            <span>Latest break-even L2 fee (cost-side reference): <strong id=\"latestRequiredFee\">-</strong></span>
             <span>Latest charged L2 fee: <strong id=\"latestChargedFee\">-</strong></span>
             <span>Latest gas component fee: <strong id=\"latestGasComponentFee\">-</strong></span>
             <span>Latest blob component fee: <strong id=\"latestBlobComponentFee\">-</strong></span>
@@ -2627,6 +2659,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           <div class=\"score-kpis\">
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Fee std</div><div class=\"score-kpi-value\" id=\"uxFeeStd\">-</div></div>
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Fee step p95</div><div class=\"score-kpi-value\" id=\"uxFeeStepP95\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Fee premium vs break-even (mean)</div><div class=\"score-kpi-value\" id=\"uxFeeLevelMean\">-</div></div>
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Clamp-max ratio</div><div class=\"score-kpi-value\" id=\"uxClampMaxRatio\">-</div></div>
           </div>
           <div class=\"assumptions-title\">Score Weights (Detailed)</div>
@@ -2641,6 +2674,7 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
             <label>UX w_p99 <input id=\"uxWP99\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_P99:g}\" /></label>
             <label>UX w_maxStep <input id=\"uxWMaxStep\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_MAXSTEP:g}\" /></label>
             <label>UX w_clamp <input id=\"uxWClamp\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_CLAMP:g}\" /></label>
+            <label>UX w_level <input id=\"uxWLevel\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_LEVEL:g}\" /></label>
           </div>
           <div class=\"formula\" id=\"scoreWeightSummary\">overall weights: -</div>
           <div class=\"formula\" id=\"healthFormulaLine\">health_badness = -</div>
@@ -2713,12 +2747,13 @@ def build_html(title, js_filename, current_html_name=None, range_options=None):
           <li><code>dGap</code>: absolute final vault-target gap, normalized by target</li>
           <li><code>dStreak</code>: longest consecutive under-target run, normalized by range length</li>
         </ul>
-        <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp)</code></p>
+        <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp, uLevel)</code></p>
         <ul>
           <li><code>uStd</code>: fee standard deviation, normalized by max fee</li>
           <li><code>uP95</code>/<code>uP99</code>: p95/p99 absolute fee step size, normalized by max fee</li>
           <li><code>uMax</code>: max absolute fee step, normalized by max fee</li>
           <li><code>uClamp</code>: fraction of blocks clamped at max fee</li>
+          <li><code>uLevel</code>: average premium above break-even fee, normalized by break-even mean</li>
         </ul>
         <p>Use the weight inputs to emphasize protocol health vs user UX, then click <strong>Score current range</strong>.</p>
       </div>
