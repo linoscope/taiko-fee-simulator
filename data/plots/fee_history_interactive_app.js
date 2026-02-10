@@ -1,8 +1,8 @@
 (function () {
   const BLOB_GAS_PER_BLOB = 131072;
   const L1_BLOCK_TIME_SECONDS = 12;
-  const DEFAULT_ALPHA_GAS = 0.000166666667;
-  const DEFAULT_ALPHA_BLOB = 0.000436906667;
+  const DEFAULT_ALPHA_GAS = 0.001666666667;
+  const DEFAULT_ALPHA_BLOB = 0.004369066667;
   const DEMAND_MULTIPLIERS = Object.freeze({ low: 0.7, base: 1.0, high: 1.4 });
   const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
   const SWEEP_ALPHA_VARIANTS = Object.freeze(['current', 'zero']);
@@ -10,7 +10,7 @@
   const SWEEP_KI_VALUES = Object.freeze([0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]);
   const SWEEP_KD_VALUES = Object.freeze([0.0]);
   const SWEEP_I_MAX_VALUES = Object.freeze([5.0, 10.0, 100.0]);
-  const SWEEP_MAX_BLOCKS = 180000;
+  const SWEEP_MAX_BLOCKS = 360000;
   const DATASET_MANIFEST = (window.__feeDatasetManifest && Array.isArray(window.__feeDatasetManifest.datasets))
     ? window.__feeDatasetManifest.datasets.slice()
     : [];
@@ -125,6 +125,7 @@
   const totalFormulaLine = document.getElementById('totalFormulaLine');
   const scoreBtn = document.getElementById('scoreBtn');
   const scoreStatus = document.getElementById('scoreStatus');
+  const scoreCard = document.getElementById('scoreCard');
   const scoreHelpBtn = document.getElementById('scoreHelpBtn');
   const scoreHelpModal = document.getElementById('scoreHelpModal');
   const scoreHelpClose = document.getElementById('scoreHelpClose');
@@ -438,6 +439,7 @@
   }
 
   function markScoreStale(reason) {
+    if (scoreCard) scoreCard.classList.add('stale');
     if (!scoreStatus) return;
     const why = reason ? ` (${reason})` : '';
     scoreStatus.textContent = `Score is stale${why}. Click "Score current range" to compute.`;
@@ -542,6 +544,7 @@
 
   function getModeFlags(mode) {
     const usesFeedforward = (
+      mode === 'ff' ||
       mode === 'alpha-only' ||
       mode === 'pi+ff' ||
       mode === 'pdi+ff'
@@ -569,13 +572,13 @@
   }
 
   function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {
-    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return;
+    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return null;
     const i0 = lowerBound(blocks, minBlock);
     const i1 = upperBound(blocks, maxBlock) - 1;
-    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return;
+    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return null;
 
     const n = i1 - i0 + 1;
-    if (n <= 0) return;
+    if (n <= 0) return null;
 
     const deadbandPct = parsePositive(deficitDeadbandPctInput, 5.0);
     const deadbandEth = targetVaultEth * (deadbandPct / 100);
@@ -727,16 +730,45 @@
         `Scored blocks ${blocks[i0].toLocaleString()}-${blocks[i1].toLocaleString()} ` +
         `(${n.toLocaleString()} blocks).`;
     }
+    if (scoreCard) scoreCard.classList.remove('stale');
+    return {
+      i0,
+      i1,
+      n,
+      healthBadness,
+      uxBadness,
+      totalBadness
+    };
   }
 
   function scoreCurrentRangeNow() {
     const [minB, maxB] = clampRange(minInput.value, maxInput.value);
-    updateScorecard(
+    const score = updateScorecard(
       minB,
       maxB,
       parsePositive(maxFeeGweiInput, 1.0),
       parsePositive(targetVaultEthInput, 10.0)
     );
+    if (!score) return;
+
+    sweepScoredHistory.push({
+      uxBadness: score.uxBadness,
+      healthBadness: score.healthBadness,
+      totalBadness: score.totalBadness,
+      mode: controllerModeInput.value || 'ff',
+      alphaVariant: autoAlphaInput.checked ? 'auto' : 'current',
+      alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
+      alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
+      kp: parsePositive(kpInput, 0),
+      ki: parsePositive(kiInput, 0),
+      kd: parsePositive(kdInput, 0),
+      iMax: parseNumber(iMaxInput, 0),
+      scoredRangeMin: minB,
+      scoredRangeMax: maxB
+    });
+    if (sweepScoredHistory.length > 256) sweepScoredHistory.shift();
+
+    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
   }
 
   function ensureFeedforwardDefaults() {
@@ -763,7 +795,7 @@
   }
 
   function applyControllerModePreset(mode) {
-    if (mode === 'alpha-only') {
+    if (mode === 'ff' || mode === 'alpha-only') {
       kpInput.value = '0';
       kiInput.value = '0';
       kdInput.value = '0';
@@ -891,6 +923,7 @@
   let sweepBestCandidate = null;
   let sweepResults = [];
   let sweepCurrentPoint = null;
+  let sweepScoredHistory = [];
   let sweepRunSeq = 0;
   let sweepPoints = [];
 
@@ -909,6 +942,28 @@
   function setSweepHoverText(msg) {
     if (!sweepHover) return;
     sweepHover.textContent = msg || 'Hover point: -';
+  }
+
+  function resetSweepState(reason) {
+    sweepResults = [];
+    sweepBestCandidate = null;
+    sweepCurrentPoint = null;
+    sweepScoredHistory = [];
+    sweepPoints = [];
+    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
+    if (sweepBestMode) sweepBestMode.textContent = '-';
+    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
+    if (sweepBestKp) sweepBestKp.textContent = '-';
+    if (sweepBestKi) sweepBestKi.textContent = '-';
+    if (sweepBestImax) sweepBestImax.textContent = '-';
+    if (sweepBestHealth) sweepBestHealth.textContent = '-';
+    if (sweepBestUx) sweepBestUx.textContent = '-';
+    if (sweepBestTotal) sweepBestTotal.textContent = '-';
+    if (sweepCandidateCount) sweepCandidateCount.textContent = '-';
+    if (sweepRangeCount) sweepRangeCount.textContent = '-';
+    renderSweepScatter([], null, null, []);
+    setSweepHoverText('Hover point: -');
+    markSweepStale(reason || 'range changed');
   }
 
   function markSweepStale(reason) {
@@ -988,7 +1043,7 @@
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
-    const controllerMode = controllerModeInput.value || 'alpha-only';
+    const controllerMode = controllerModeInput.value || 'ff';
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, 5);
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 5);
     const derivBeta = clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1);
@@ -1288,7 +1343,7 @@
       } else {
         sweepCurrentPoint = null;
       }
-      renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint);
+      renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
     }
     markScoreStale('recomputed charts');
   }
@@ -1487,9 +1542,10 @@
     };
   }
 
-  function renderSweepScatter(results, best, currentPoint) {
+  function renderSweepScatter(results, best, currentPoint, scoredHistory) {
     if (!sweepPlot) return;
     const points = [];
+    const scoredPoints = Array.isArray(scoredHistory) ? scoredHistory : [];
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       const isBest = Boolean(
@@ -1514,7 +1570,9 @@
         kd: r.kd,
         iMax: r.iMax,
         isBest,
-        isCurrent: false
+        isCurrent: false,
+        isScored: false,
+        isLatestScored: false
       });
     }
     if (
@@ -1535,9 +1593,51 @@
         kd: currentPoint.kd,
         iMax: currentPoint.iMax,
         isBest: false,
-        isCurrent: true
+        isCurrent: true,
+        isScored: false,
+        isLatestScored: false
       });
     }
+    for (let i = 0; i < scoredPoints.length; i++) {
+      const p = scoredPoints[i];
+      if (!Number.isFinite(p.uxBadness) || !Number.isFinite(p.healthBadness)) continue;
+      points.push({
+        ux: p.uxBadness,
+        health: p.healthBadness,
+        total: p.totalBadness,
+        mode: p.mode || '-',
+        alphaVariant: p.alphaVariant || 'current',
+        alphaGas: p.alphaGas,
+        alphaBlob: p.alphaBlob,
+        kp: p.kp,
+        ki: p.ki,
+        kd: p.kd,
+        iMax: p.iMax,
+        isBest: false,
+        isCurrent: false,
+        isScored: true,
+        isLatestScored: i === scoredPoints.length - 1
+      });
+    }
+    // Always include the origin as a visual reference point for the tradeoff chart.
+    points.push({
+      ux: 0,
+      health: 0,
+      total: 0,
+      mode: 'origin',
+      alphaVariant: '-',
+      alphaGas: 0,
+      alphaBlob: 0,
+      kp: 0,
+      ki: 0,
+      kd: 0,
+      iMax: 0,
+      isBest: false,
+      isCurrent: false,
+      isScored: false,
+      isLatestScored: false,
+      isOrigin: true
+    });
     points.sort(function (a, b) {
       if (a.ux !== b.ux) return a.ux - b.ux;
       return a.health - b.health;
@@ -1547,6 +1647,9 @@
     const allY = new Array(points.length);
     const bestY = new Array(points.length);
     const currentY = new Array(points.length);
+    const scoredY = new Array(points.length);
+    const latestScoredY = new Array(points.length);
+    const originY = new Array(points.length);
 
     let xMin = Infinity;
     let xMax = -Infinity;
@@ -1560,6 +1663,9 @@
       allY[i] = p.health;
       bestY[i] = p.isBest ? p.health : null;
       currentY[i] = p.isCurrent ? p.health : null;
+      scoredY[i] = p.isScored && !p.isLatestScored ? p.health : null;
+      latestScoredY[i] = p.isLatestScored ? p.health : null;
+      originY[i] = p.isOrigin ? p.health : null;
       if (p.ux < xMin) xMin = p.ux;
       if (p.ux > xMax) xMax = p.ux;
       if (p.health < yMin) yMin = p.health;
@@ -1567,7 +1673,7 @@
     }
 
     sweepPoints = points;
-    sweepPlot.setData([x, allY, bestY, currentY]);
+    sweepPlot.setData([x, allY, bestY, currentY, scoredY, latestScoredY, originY]);
     if (points.length) {
       const xSpan = Math.max(xMax - xMin, 1e-9);
       const ySpan = Math.max(yMax - yMin, 1e-9);
@@ -1593,8 +1699,11 @@
     }
     const rankPart = Number.isFinite(p.rank) ? `#${p.rank}` : '-';
     const tagParts = [];
+    if (p.isOrigin) tagParts.push('origin');
     if (p.isBest) tagParts.push('best');
     if (p.isCurrent) tagParts.push('current');
+    if (p.isScored) tagParts.push('scored');
+    if (p.isLatestScored) tagParts.push('latest');
     const tagText = tagParts.length ? ` (${tagParts.join(', ')})` : '';
     setSweepHoverText(
       `Hover point ${rankPart}${tagText}: mode=${p.mode}, alpha=${p.alphaVariant}, ` +
@@ -1742,7 +1851,7 @@
     if (sweepBestHealth) sweepBestHealth.textContent = formatNum(sweepBestCandidate.healthBadness, 6);
     if (sweepBestUx) sweepBestUx.textContent = formatNum(sweepBestCandidate.uxBadness, 6);
     if (sweepBestTotal) sweepBestTotal.textContent = formatNum(sweepBestCandidate.totalBadness, 6);
-    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint);
+    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
 
     if (sweepCancelRequested) {
       setSweepStatus(
@@ -2077,9 +2186,27 @@
         },
         {
           label: 'Current settings (last recompute)',
+          stroke: '#0284c7',
+          width: 0,
+          points: { show: true, size: 7, stroke: '#0284c7', fill: '#38bdf8' }
+        },
+        {
+          label: 'Scored points (history)',
+          stroke: '#a16207',
+          width: 0,
+          points: { show: true, size: 6, stroke: '#a16207', fill: '#fde68a' }
+        },
+        {
+          label: 'Scored point (latest)',
           stroke: '#ca8a04',
           width: 0,
-          points: { show: true, size: 7, stroke: '#ca8a04', fill: '#facc15' }
+          points: { show: true, size: 8, stroke: '#ca8a04', fill: '#facc15' }
+        },
+        {
+          label: 'Origin (0,0)',
+          stroke: '#111827',
+          width: 0,
+          points: { show: true, size: 8, stroke: '#111827', fill: '#ffffff' }
         }
       ],
       axes: [
@@ -2102,7 +2229,7 @@
         }
       ],
       cursor: {
-        drag: { x: true, y: true, setScale: true }
+        drag: { x: false, y: false, setScale: false }
       },
       hooks: {
         setCursor: [onSetSweepCursor]
@@ -2112,7 +2239,10 @@
 
   function applyRange(minVal, maxVal, sourcePlot) {
     if (!datasetReady || !blocks.length) return;
+    const prevMin = Number(minInput.value);
+    const prevMax = Number(maxInput.value);
     const [minB, maxB] = clampRange(minVal, maxVal);
+    const rangeChanged = !Number.isFinite(prevMin) || !Number.isFinite(prevMax) || prevMin !== minB || prevMax !== maxB;
     minInput.value = minB;
     maxInput.value = maxB;
     if (activeDatasetId) datasetRangeById[activeDatasetId] = [minB, maxB];
@@ -2123,6 +2253,7 @@
       if (p !== sourcePlot) p.setScale('x', { min: minB, max: maxB });
     }
     syncing = false;
+    if (rangeChanged) resetSweepState('range changed');
     markScoreStale('range changed');
   }
 
@@ -2223,7 +2354,7 @@
 
   sweepPlot = new uPlot(
     makeSweepOpts(sweepSize, sweepSize),
-    [[], [], [], []],
+    [[], [], [], [], [], [], []],
     sweepWrap
   );
 
@@ -2330,7 +2461,7 @@
   }
 
   controllerModeInput.addEventListener('change', function () {
-    applyControllerModePreset(controllerModeInput.value || 'alpha-only');
+    applyControllerModePreset(controllerModeInput.value || 'ff');
     markParamsStale('Controller mode changed. Click Recompute derived charts.');
   });
 

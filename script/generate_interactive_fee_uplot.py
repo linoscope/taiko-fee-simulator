@@ -13,7 +13,7 @@ L1_BLOCK_TIME_SECONDS = 12
 BLOB_GAS_PER_BLOB = 131_072
 
 DEFAULT_POST_EVERY_BLOCKS = 10
-DEFAULT_L2_GAS_PER_L2_BLOCK = 10_000_000
+DEFAULT_L2_GAS_PER_L2_BLOCK = 1_000_000
 DEFAULT_L2_BLOCK_TIME_SECONDS = 2
 DEFAULT_L1_GAS_USED = 100_000
 DEFAULT_NUM_BLOBS = 2
@@ -22,7 +22,7 @@ DEFAULT_MIN_FEE_GWEI = 0.0
 DEFAULT_MAX_FEE_GWEI = 1.0
 DEFAULT_INITIAL_VAULT_ETH = 10.0
 DEFAULT_TARGET_VAULT_ETH = 10.0
-DEFAULT_CONTROLLER_MODE = "alpha-only"
+DEFAULT_CONTROLLER_MODE = "pdi+ff"
 DEFAULT_D_FF_BLOCKS = 5
 DEFAULT_D_FB_BLOCKS = 5
 DEFAULT_KP = 0.1
@@ -54,7 +54,7 @@ DEFAULT_SWEEP_KP_VALUES = [0.0, 0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60]
 DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]
 DEFAULT_SWEEP_KD_VALUES = [0.0]
 DEFAULT_SWEEP_I_MAX_VALUES = [5.0, 10.0, 100.0]
-DEFAULT_SWEEP_MAX_BLOCKS = 180_000
+DEFAULT_SWEEP_MAX_BLOCKS = 360_000
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -379,6 +379,7 @@ def build_app_js():
   const totalFormulaLine = document.getElementById('totalFormulaLine');
   const scoreBtn = document.getElementById('scoreBtn');
   const scoreStatus = document.getElementById('scoreStatus');
+  const scoreCard = document.getElementById('scoreCard');
   const scoreHelpBtn = document.getElementById('scoreHelpBtn');
   const scoreHelpModal = document.getElementById('scoreHelpModal');
   const scoreHelpClose = document.getElementById('scoreHelpClose');
@@ -692,6 +693,7 @@ def build_app_js():
   }}
 
   function markScoreStale(reason) {{
+    if (scoreCard) scoreCard.classList.add('stale');
     if (!scoreStatus) return;
     const why = reason ? ` (${{reason}})` : '';
     scoreStatus.textContent = `Score is stale${{why}}. Click "Score current range" to compute.`;
@@ -796,6 +798,7 @@ def build_app_js():
 
   function getModeFlags(mode) {{
     const usesFeedforward = (
+      mode === 'ff' ||
       mode === 'alpha-only' ||
       mode === 'pi+ff' ||
       mode === 'pdi+ff'
@@ -823,13 +826,13 @@ def build_app_js():
   }}
 
   function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {{
-    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return;
+    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return null;
     const i0 = lowerBound(blocks, minBlock);
     const i1 = upperBound(blocks, maxBlock) - 1;
-    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return;
+    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return null;
 
     const n = i1 - i0 + 1;
-    if (n <= 0) return;
+    if (n <= 0) return null;
 
     const deadbandPct = parsePositive(deficitDeadbandPctInput, {DEFAULT_DEFICIT_DEADBAND_PCT});
     const deadbandEth = targetVaultEth * (deadbandPct / 100);
@@ -981,16 +984,45 @@ def build_app_js():
         `Scored blocks ${{blocks[i0].toLocaleString()}}-${{blocks[i1].toLocaleString()}} ` +
         `(${{n.toLocaleString()}} blocks).`;
     }}
+    if (scoreCard) scoreCard.classList.remove('stale');
+    return {{
+      i0,
+      i1,
+      n,
+      healthBadness,
+      uxBadness,
+      totalBadness
+    }};
   }}
 
   function scoreCurrentRangeNow() {{
     const [minB, maxB] = clampRange(minInput.value, maxInput.value);
-    updateScorecard(
+    const score = updateScorecard(
       minB,
       maxB,
       parsePositive(maxFeeGweiInput, {DEFAULT_MAX_FEE_GWEI}),
       parsePositive(targetVaultEthInput, {DEFAULT_TARGET_VAULT_ETH})
     );
+    if (!score) return;
+
+    sweepScoredHistory.push({{
+      uxBadness: score.uxBadness,
+      healthBadness: score.healthBadness,
+      totalBadness: score.totalBadness,
+      mode: controllerModeInput.value || 'ff',
+      alphaVariant: autoAlphaInput.checked ? 'auto' : 'current',
+      alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
+      alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
+      kp: parsePositive(kpInput, 0),
+      ki: parsePositive(kiInput, 0),
+      kd: parsePositive(kdInput, 0),
+      iMax: parseNumber(iMaxInput, 0),
+      scoredRangeMin: minB,
+      scoredRangeMax: maxB
+    }});
+    if (sweepScoredHistory.length > 256) sweepScoredHistory.shift();
+
+    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
   }}
 
   function ensureFeedforwardDefaults() {{
@@ -1017,7 +1049,7 @@ def build_app_js():
   }}
 
   function applyControllerModePreset(mode) {{
-    if (mode === 'alpha-only') {{
+    if (mode === 'ff' || mode === 'alpha-only') {{
       kpInput.value = '0';
       kiInput.value = '0';
       kdInput.value = '0';
@@ -1145,6 +1177,7 @@ def build_app_js():
   let sweepBestCandidate = null;
   let sweepResults = [];
   let sweepCurrentPoint = null;
+  let sweepScoredHistory = [];
   let sweepRunSeq = 0;
   let sweepPoints = [];
 
@@ -1163,6 +1196,28 @@ def build_app_js():
   function setSweepHoverText(msg) {{
     if (!sweepHover) return;
     sweepHover.textContent = msg || 'Hover point: -';
+  }}
+
+  function resetSweepState(reason) {{
+    sweepResults = [];
+    sweepBestCandidate = null;
+    sweepCurrentPoint = null;
+    sweepScoredHistory = [];
+    sweepPoints = [];
+    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
+    if (sweepBestMode) sweepBestMode.textContent = '-';
+    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
+    if (sweepBestKp) sweepBestKp.textContent = '-';
+    if (sweepBestKi) sweepBestKi.textContent = '-';
+    if (sweepBestImax) sweepBestImax.textContent = '-';
+    if (sweepBestHealth) sweepBestHealth.textContent = '-';
+    if (sweepBestUx) sweepBestUx.textContent = '-';
+    if (sweepBestTotal) sweepBestTotal.textContent = '-';
+    if (sweepCandidateCount) sweepCandidateCount.textContent = '-';
+    if (sweepRangeCount) sweepRangeCount.textContent = '-';
+    renderSweepScatter([], null, null, []);
+    setSweepHoverText('Hover point: -');
+    markSweepStale(reason || 'range changed');
   }}
 
   function markSweepStale(reason) {{
@@ -1242,7 +1297,7 @@ def build_app_js():
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
-    const controllerMode = controllerModeInput.value || 'alpha-only';
+    const controllerMode = controllerModeInput.value || 'ff';
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, {DEFAULT_D_FF_BLOCKS});
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
     const derivBeta = clampNum(parseNumber(dSmoothBetaInput, {DEFAULT_DERIV_BETA}), 0, 1);
@@ -1542,7 +1597,7 @@ def build_app_js():
       }} else {{
         sweepCurrentPoint = null;
       }}
-      renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint);
+      renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
     }}
     markScoreStale('recomputed charts');
   }}
@@ -1632,7 +1687,10 @@ def build_app_js():
       feeSum += chargedFeeGwei;
       feeSumSq += chargedFeeGwei * chargedFeeGwei;
       feeCount += 1;
-      if (feePrev != null) feeSteps.push(Math.abs(chargedFeeGwei - feePrev));
+      if (feePrev != null) {{
+        const step = Math.abs(chargedFeeGwei - feePrev);
+        feeSteps.push(step);
+      }}
       feePrev = chargedFeeGwei;
 
       const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
@@ -1741,9 +1799,10 @@ def build_app_js():
     }};
   }}
 
-  function renderSweepScatter(results, best, currentPoint) {{
+  function renderSweepScatter(results, best, currentPoint, scoredHistory) {{
     if (!sweepPlot) return;
     const points = [];
+    const scoredPoints = Array.isArray(scoredHistory) ? scoredHistory : [];
     for (let i = 0; i < results.length; i++) {{
       const r = results[i];
       const isBest = Boolean(
@@ -1768,7 +1827,9 @@ def build_app_js():
         kd: r.kd,
         iMax: r.iMax,
         isBest,
-        isCurrent: false
+        isCurrent: false,
+        isScored: false,
+        isLatestScored: false
       }});
     }}
     if (
@@ -1789,9 +1850,51 @@ def build_app_js():
         kd: currentPoint.kd,
         iMax: currentPoint.iMax,
         isBest: false,
-        isCurrent: true
+        isCurrent: true,
+        isScored: false,
+        isLatestScored: false
       }});
     }}
+    for (let i = 0; i < scoredPoints.length; i++) {{
+      const p = scoredPoints[i];
+      if (!Number.isFinite(p.uxBadness) || !Number.isFinite(p.healthBadness)) continue;
+      points.push({{
+        ux: p.uxBadness,
+        health: p.healthBadness,
+        total: p.totalBadness,
+        mode: p.mode || '-',
+        alphaVariant: p.alphaVariant || 'current',
+        alphaGas: p.alphaGas,
+        alphaBlob: p.alphaBlob,
+        kp: p.kp,
+        ki: p.ki,
+        kd: p.kd,
+        iMax: p.iMax,
+        isBest: false,
+        isCurrent: false,
+        isScored: true,
+        isLatestScored: i === scoredPoints.length - 1
+      }});
+    }}
+    // Always include the origin as a visual reference point for the tradeoff chart.
+    points.push({{
+      ux: 0,
+      health: 0,
+      total: 0,
+      mode: 'origin',
+      alphaVariant: '-',
+      alphaGas: 0,
+      alphaBlob: 0,
+      kp: 0,
+      ki: 0,
+      kd: 0,
+      iMax: 0,
+      isBest: false,
+      isCurrent: false,
+      isScored: false,
+      isLatestScored: false,
+      isOrigin: true
+    }});
     points.sort(function (a, b) {{
       if (a.ux !== b.ux) return a.ux - b.ux;
       return a.health - b.health;
@@ -1801,6 +1904,9 @@ def build_app_js():
     const allY = new Array(points.length);
     const bestY = new Array(points.length);
     const currentY = new Array(points.length);
+    const scoredY = new Array(points.length);
+    const latestScoredY = new Array(points.length);
+    const originY = new Array(points.length);
 
     let xMin = Infinity;
     let xMax = -Infinity;
@@ -1814,6 +1920,9 @@ def build_app_js():
       allY[i] = p.health;
       bestY[i] = p.isBest ? p.health : null;
       currentY[i] = p.isCurrent ? p.health : null;
+      scoredY[i] = p.isScored && !p.isLatestScored ? p.health : null;
+      latestScoredY[i] = p.isLatestScored ? p.health : null;
+      originY[i] = p.isOrigin ? p.health : null;
       if (p.ux < xMin) xMin = p.ux;
       if (p.ux > xMax) xMax = p.ux;
       if (p.health < yMin) yMin = p.health;
@@ -1821,7 +1930,7 @@ def build_app_js():
     }}
 
     sweepPoints = points;
-    sweepPlot.setData([x, allY, bestY, currentY]);
+    sweepPlot.setData([x, allY, bestY, currentY, scoredY, latestScoredY, originY]);
     if (points.length) {{
       const xSpan = Math.max(xMax - xMin, 1e-9);
       const ySpan = Math.max(yMax - yMin, 1e-9);
@@ -1847,8 +1956,11 @@ def build_app_js():
     }}
     const rankPart = Number.isFinite(p.rank) ? `#${{p.rank}}` : '-';
     const tagParts = [];
+    if (p.isOrigin) tagParts.push('origin');
     if (p.isBest) tagParts.push('best');
     if (p.isCurrent) tagParts.push('current');
+    if (p.isScored) tagParts.push('scored');
+    if (p.isLatestScored) tagParts.push('latest');
     const tagText = tagParts.length ? ` (${{tagParts.join(', ')}})` : '';
     setSweepHoverText(
       `Hover point ${{rankPart}}${{tagText}}: mode=${{p.mode}}, alpha=${{p.alphaVariant}}, ` +
@@ -1996,7 +2108,7 @@ def build_app_js():
     if (sweepBestHealth) sweepBestHealth.textContent = formatNum(sweepBestCandidate.healthBadness, 6);
     if (sweepBestUx) sweepBestUx.textContent = formatNum(sweepBestCandidate.uxBadness, 6);
     if (sweepBestTotal) sweepBestTotal.textContent = formatNum(sweepBestCandidate.totalBadness, 6);
-    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint);
+    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
 
     if (sweepCancelRequested) {{
       setSweepStatus(
@@ -2331,9 +2443,27 @@ def build_app_js():
         }},
         {{
           label: 'Current settings (last recompute)',
+          stroke: '#0284c7',
+          width: 0,
+          points: {{ show: true, size: 7, stroke: '#0284c7', fill: '#38bdf8' }}
+        }},
+        {{
+          label: 'Scored points (history)',
+          stroke: '#a16207',
+          width: 0,
+          points: {{ show: true, size: 6, stroke: '#a16207', fill: '#fde68a' }}
+        }},
+        {{
+          label: 'Scored point (latest)',
           stroke: '#ca8a04',
           width: 0,
-          points: {{ show: true, size: 7, stroke: '#ca8a04', fill: '#facc15' }}
+          points: {{ show: true, size: 8, stroke: '#ca8a04', fill: '#facc15' }}
+        }},
+        {{
+          label: 'Origin (0,0)',
+          stroke: '#111827',
+          width: 0,
+          points: {{ show: true, size: 8, stroke: '#111827', fill: '#ffffff' }}
         }}
       ],
       axes: [
@@ -2356,7 +2486,7 @@ def build_app_js():
         }}
       ],
       cursor: {{
-        drag: {{ x: true, y: true, setScale: true }}
+        drag: {{ x: false, y: false, setScale: false }}
       }},
       hooks: {{
         setCursor: [onSetSweepCursor]
@@ -2366,7 +2496,10 @@ def build_app_js():
 
   function applyRange(minVal, maxVal, sourcePlot) {{
     if (!datasetReady || !blocks.length) return;
+    const prevMin = Number(minInput.value);
+    const prevMax = Number(maxInput.value);
     const [minB, maxB] = clampRange(minVal, maxVal);
+    const rangeChanged = !Number.isFinite(prevMin) || !Number.isFinite(prevMax) || prevMin !== minB || prevMax !== maxB;
     minInput.value = minB;
     maxInput.value = maxB;
     if (activeDatasetId) datasetRangeById[activeDatasetId] = [minB, maxB];
@@ -2377,6 +2510,7 @@ def build_app_js():
       if (p !== sourcePlot) p.setScale('x', {{ min: minB, max: maxB }});
     }}
     syncing = false;
+    if (rangeChanged) resetSweepState('range changed');
     markScoreStale('range changed');
   }}
 
@@ -2477,7 +2611,7 @@ def build_app_js():
 
   sweepPlot = new uPlot(
     makeSweepOpts(sweepSize, sweepSize),
-    [[], [], [], []],
+    [[], [], [], [], [], [], []],
     sweepWrap
   );
 
@@ -2584,7 +2718,7 @@ def build_app_js():
   }}
 
   controllerModeInput.addEventListener('change', function () {{
-    applyControllerModePreset(controllerModeInput.value || 'alpha-only');
+    applyControllerModePreset(controllerModeInput.value || 'ff');
     markParamsStale('Controller mode changed. Click Recompute derived charts.');
   }});
 
@@ -3058,7 +3192,7 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
             <label>Priority fee (gwei) <input id=\"priorityFeeGwei\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_PRIORITY_FEE_GWEI:g}\" /></label>
             <label>Controller mode
               <select id=\"controllerMode\">
-                <option value=\"alpha-only\"{" selected" if DEFAULT_CONTROLLER_MODE == "alpha-only" else ""}>alpha-only</option>
+                <option value=\"ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "ff" else ""}>ff</option>
                 <option value=\"p\"{" selected" if DEFAULT_CONTROLLER_MODE == "p" else ""}>p</option>
                 <option value=\"pi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi" else ""}>pi</option>
                 <option value=\"pd\"{" selected" if DEFAULT_CONTROLLER_MODE == "pd" else ""}>pd</option>
@@ -3115,7 +3249,7 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
           </div>
         </div>
 
-        <div class=\"assumptions score-card\">
+        <div class=\"assumptions score-card\" id=\"scoreCard\">
           <div class=\"title-row\">
             <div class=\"assumptions-title\">Health / UX Scoring</div>
             <button id=\"scoreHelpBtn\" class=\"help-btn\" type=\"button\" title=\"Explain scoring\">?</button>
