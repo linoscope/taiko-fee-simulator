@@ -296,6 +296,8 @@ def build_app_js():
   const busySpinner = document.getElementById('busySpinner');
   const busyOverlay = document.getElementById('busyOverlay');
   const datasetRangeInput = document.getElementById('datasetRange');
+  const paramsCard = document.getElementById('paramsCard');
+  const paramsDirtyHint = document.getElementById('paramsDirtyHint');
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
   const l2GasPerL2BlockInput = document.getElementById('l2GasPerL2Block');
@@ -412,6 +414,7 @@ def build_app_js():
   let uiBusyCount = 0;
   let recalcPending = false;
   let recalcNeedsRerun = false;
+  let paramsDirty = false;
 
   function setUiBusy(active) {{
     uiBusyCount += active ? 1 : -1;
@@ -419,6 +422,21 @@ def build_app_js():
     const show = uiBusyCount > 0;
     if (busySpinner) busySpinner.style.display = show ? 'inline-block' : 'none';
     if (busyOverlay) busyOverlay.style.display = show ? 'inline-flex' : 'none';
+  }}
+
+  function clearParamsStale() {{
+    paramsDirty = false;
+    if (paramsCard) paramsCard.classList.remove('stale');
+    if (paramsDirtyHint) paramsDirtyHint.textContent = '';
+  }}
+
+  function markParamsStale(reason) {{
+    paramsDirty = true;
+    if (paramsCard) paramsCard.classList.add('stale');
+    if (paramsDirtyHint) paramsDirtyHint.textContent = 'Stale: click Recompute derived charts';
+    markScoreStale('parameter change pending recompute');
+    markSweepStale('parameter change pending recompute');
+    if (reason) setStatus(reason);
   }}
 
   function scheduleRecalc(statusMsg = 'Recomputing derived charts...') {{
@@ -433,6 +451,7 @@ def build_app_js():
     function runOnce() {{
       try {{
         recalcDerivedSeries();
+        clearParamsStale();
       }} finally {{
         if (recalcNeedsRerun) {{
           recalcNeedsRerun = false;
@@ -445,6 +464,18 @@ def build_app_js():
     }}
 
     window.setTimeout(runOnce, 0);
+  }}
+
+  function runBusyUiTask(statusMsg, task) {{
+    if (statusMsg) setStatus(statusMsg);
+    setUiBusy(true);
+    window.setTimeout(function () {{
+      try {{
+        task();
+      }} finally {{
+        setUiBusy(false);
+      }}
+    }}, 0);
   }}
 
   function setStatus(msg) {{
@@ -586,6 +617,7 @@ def build_app_js():
       datasetReady = true;
       markSweepStale('dataset changed');
       recalcDerivedSeries();
+      clearParamsStale();
       applyRange(nextMin, nextMax, null);
       setStatus(`Loaded dataset: ${{meta.label || id}}`);
     }} finally {{
@@ -970,10 +1002,18 @@ def build_app_js():
     }}
   }}
 
+  function syncAutoAlphaInputs() {{
+    const autoAlphaEnabled = autoAlphaInput.checked;
+    alphaGasInput.disabled = autoAlphaEnabled;
+    alphaBlobInput.disabled = autoAlphaEnabled;
+    if (!autoAlphaEnabled) ensureFeedforwardDefaults();
+  }}
+
   function disableFeedforward() {{
     autoAlphaInput.checked = false;
     alphaGasInput.value = '0';
     alphaBlobInput.value = '0';
+    syncAutoAlphaInputs();
   }}
 
   function applyControllerModePreset(mode) {{
@@ -1127,16 +1167,8 @@ def build_app_js():
 
   function markSweepStale(reason) {{
     if (sweepRunning) return;
-    sweepBestCandidate = null;
-    sweepResults = [];
-    sweepCurrentPoint = null;
-    sweepPoints = [];
-    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
-    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
     const why = reason ? ` (${{reason}})` : '';
     setSweepStatus(`Sweep stale${{why}}. Run parameter sweep to refresh.`);
-    setSweepHoverText('Hover point: -');
-    if (sweepPlot) sweepPlot.setData([[], [], [], []]);
   }}
 
   function getSweepRangeIndices() {{
@@ -1828,6 +1860,7 @@ def build_app_js():
   async function runParameterSweep() {{
     if (sweepRunning) return;
     recalcDerivedSeries();
+    clearParamsStale();
 
     const range = getSweepRangeIndices();
     if (!range) {{
@@ -1994,8 +2027,7 @@ def build_app_js():
     kiInput.value = `${{sweepBestCandidate.ki}}`;
     kdInput.value = `${{sweepBestCandidate.kd}}`;
     iMaxInput.value = `${{sweepBestCandidate.iMax}}`;
-    recalcDerivedSeries();
-    scoreCurrentRangeNow();
+    scheduleRecalc('Applied best params. Recomputing derived charts...');
   }}
 
   if (!window.uPlot) {{
@@ -2279,6 +2311,7 @@ def build_app_js():
       scales: {{ x: {{}}, y: {{}} }},
       series: [
         {{
+          label: 'UX badness',
           value: function (u, v) {{
             if (!Number.isFinite(v)) return '';
             return formatNum(v, 6);
@@ -2307,7 +2340,12 @@ def build_app_js():
         {{
           label: 'UX badness',
           values: function (u, vals) {{
-            return vals.map(function (v) {{ return formatNum(v, 4); }});
+            return vals.map(function (v) {{
+              if (!Number.isFinite(v)) return '';
+              const av = Math.abs(v);
+              if (av > 0 && av < 0.001) return formatNum(v, 6);
+              return formatNum(v, 4);
+            }});
           }}
         }},
         {{
@@ -2452,19 +2490,27 @@ def build_app_js():
   if (rangeDateText) rangeDateText.textContent = '';
 
   document.getElementById('applyBtn').addEventListener('click', function () {{
-    applyRange(minInput.value, maxInput.value, null);
+    runBusyUiTask('Applying range...', function () {{
+      applyRange(minInput.value, maxInput.value, null);
+    }});
   }});
 
   document.getElementById('resetBtn').addEventListener('click', function () {{
-    applyRange(MIN_BLOCK, MAX_BLOCK, null);
+    runBusyUiTask('Resetting to full range...', function () {{
+      applyRange(MIN_BLOCK, MAX_BLOCK, null);
+    }});
   }});
 
   document.getElementById('tail20kBtn').addEventListener('click', function () {{
-    applyRange(MAX_BLOCK - 20000, MAX_BLOCK, null);
+    runBusyUiTask('Applying last 20k range...', function () {{
+      applyRange(MAX_BLOCK - 20000, MAX_BLOCK, null);
+    }});
   }});
 
   document.getElementById('tail5kBtn').addEventListener('click', function () {{
-    applyRange(MAX_BLOCK - 5000, MAX_BLOCK, null);
+    runBusyUiTask('Applying last 5k range...', function () {{
+      applyRange(MAX_BLOCK - 5000, MAX_BLOCK, null);
+    }});
   }});
 
   document.getElementById('recalcBtn').addEventListener('click', function () {{
@@ -2539,15 +2585,28 @@ def build_app_js():
 
   controllerModeInput.addEventListener('change', function () {{
     applyControllerModePreset(controllerModeInput.value || 'alpha-only');
-    scheduleRecalc('Applying controller mode...');
+    markParamsStale('Controller mode changed. Click Recompute derived charts.');
+  }});
+
+  autoAlphaInput.addEventListener('change', function () {{
+    syncAutoAlphaInputs();
+    markParamsStale('Auto alpha changed. Click Recompute derived charts.');
   }});
 
   minInput.addEventListener('keydown', function (e) {{
-    if (e.key === 'Enter') applyRange(minInput.value, maxInput.value, null);
+    if (e.key === 'Enter') {{
+      runBusyUiTask('Applying range...', function () {{
+        applyRange(minInput.value, maxInput.value, null);
+      }});
+    }}
   }});
 
   maxInput.addEventListener('keydown', function (e) {{
-    if (e.key === 'Enter') applyRange(minInput.value, maxInput.value, null);
+    if (e.key === 'Enter') {{
+      runBusyUiTask('Applying range...', function () {{
+        applyRange(minInput.value, maxInput.value, null);
+      }});
+    }}
   }});
 
   [
@@ -2559,7 +2618,6 @@ def build_app_js():
     l1GasUsedInput,
     numBlobsInput,
     priorityFeeGweiInput,
-    autoAlphaInput,
     alphaGasInput,
     alphaBlobInput,
     dffBlocksInput,
@@ -2577,10 +2635,10 @@ def build_app_js():
     targetVaultEthInput
   ].forEach(function (el) {{
     el.addEventListener('keydown', function (e) {{
-      if (e.key === 'Enter') scheduleRecalc('Applying parameter changes...');
+      if (e.key === 'Enter') markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     }});
     el.addEventListener('change', function () {{
-      scheduleRecalc('Applying parameter changes...');
+      markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     }});
   }});
 
@@ -2742,7 +2800,19 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
       margin-bottom: 8px;
       background: #f8fafc;
     }}
+    .assumptions.stale {{
+      border-color: #f59e0b;
+      background: #fffbeb;
+      box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.25);
+    }}
     .assumptions-title {{ font-size: 13px; color: var(--muted); margin-bottom: 8px; }}
+    .dirty-hint {{
+      margin: 4px 0 8px;
+      font-size: 12px;
+      color: #92400e;
+      font-weight: 600;
+      min-height: 16px;
+    }}
     .title-row {{
       display: flex;
       align-items: center;
@@ -2961,8 +3031,9 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
           <span class=\"range-sub\" id=\"hoverText\"></span>
         </div>
 
-        <div class=\"assumptions\">
+        <div class=\"assumptions\" id=\"paramsCard\">
           <div class=\"assumptions-title\">L2 posting assumptions</div>
+          <div class=\"dirty-hint\" id=\"paramsDirtyHint\"></div>
           <div class=\"controls\">
             <label>Post every N L1 blocks <input id=\"postEveryBlocks\" type=\"number\" min=\"1\" step=\"1\" value=\"{DEFAULT_POST_EVERY_BLOCKS}\" /></label>
             <label>L2 gas / L2 block <input id=\"l2GasPerL2Block\" type=\"number\" min=\"0\" step=\"100000\" value=\"{DEFAULT_L2_GAS_PER_L2_BLOCK}\" /></label>

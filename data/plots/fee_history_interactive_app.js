@@ -42,6 +42,8 @@
   const busySpinner = document.getElementById('busySpinner');
   const busyOverlay = document.getElementById('busyOverlay');
   const datasetRangeInput = document.getElementById('datasetRange');
+  const paramsCard = document.getElementById('paramsCard');
+  const paramsDirtyHint = document.getElementById('paramsDirtyHint');
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
   const l2GasPerL2BlockInput = document.getElementById('l2GasPerL2Block');
@@ -158,6 +160,7 @@
   let uiBusyCount = 0;
   let recalcPending = false;
   let recalcNeedsRerun = false;
+  let paramsDirty = false;
 
   function setUiBusy(active) {
     uiBusyCount += active ? 1 : -1;
@@ -165,6 +168,21 @@
     const show = uiBusyCount > 0;
     if (busySpinner) busySpinner.style.display = show ? 'inline-block' : 'none';
     if (busyOverlay) busyOverlay.style.display = show ? 'inline-flex' : 'none';
+  }
+
+  function clearParamsStale() {
+    paramsDirty = false;
+    if (paramsCard) paramsCard.classList.remove('stale');
+    if (paramsDirtyHint) paramsDirtyHint.textContent = '';
+  }
+
+  function markParamsStale(reason) {
+    paramsDirty = true;
+    if (paramsCard) paramsCard.classList.add('stale');
+    if (paramsDirtyHint) paramsDirtyHint.textContent = 'Stale: click Recompute derived charts';
+    markScoreStale('parameter change pending recompute');
+    markSweepStale('parameter change pending recompute');
+    if (reason) setStatus(reason);
   }
 
   function scheduleRecalc(statusMsg = 'Recomputing derived charts...') {
@@ -179,6 +197,7 @@
     function runOnce() {
       try {
         recalcDerivedSeries();
+        clearParamsStale();
       } finally {
         if (recalcNeedsRerun) {
           recalcNeedsRerun = false;
@@ -191,6 +210,18 @@
     }
 
     window.setTimeout(runOnce, 0);
+  }
+
+  function runBusyUiTask(statusMsg, task) {
+    if (statusMsg) setStatus(statusMsg);
+    setUiBusy(true);
+    window.setTimeout(function () {
+      try {
+        task();
+      } finally {
+        setUiBusy(false);
+      }
+    }, 0);
   }
 
   function setStatus(msg) {
@@ -332,6 +363,7 @@
       datasetReady = true;
       markSweepStale('dataset changed');
       recalcDerivedSeries();
+      clearParamsStale();
       applyRange(nextMin, nextMax, null);
       setStatus(`Loaded dataset: ${meta.label || id}`);
     } finally {
@@ -716,10 +748,18 @@
     }
   }
 
+  function syncAutoAlphaInputs() {
+    const autoAlphaEnabled = autoAlphaInput.checked;
+    alphaGasInput.disabled = autoAlphaEnabled;
+    alphaBlobInput.disabled = autoAlphaEnabled;
+    if (!autoAlphaEnabled) ensureFeedforwardDefaults();
+  }
+
   function disableFeedforward() {
     autoAlphaInput.checked = false;
     alphaGasInput.value = '0';
     alphaBlobInput.value = '0';
+    syncAutoAlphaInputs();
   }
 
   function applyControllerModePreset(mode) {
@@ -873,16 +913,8 @@
 
   function markSweepStale(reason) {
     if (sweepRunning) return;
-    sweepBestCandidate = null;
-    sweepResults = [];
-    sweepCurrentPoint = null;
-    sweepPoints = [];
-    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
-    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
     const why = reason ? ` (${reason})` : '';
     setSweepStatus(`Sweep stale${why}. Run parameter sweep to refresh.`);
-    setSweepHoverText('Hover point: -');
-    if (sweepPlot) sweepPlot.setData([[], [], [], []]);
   }
 
   function getSweepRangeIndices() {
@@ -1574,6 +1606,7 @@
   async function runParameterSweep() {
     if (sweepRunning) return;
     recalcDerivedSeries();
+    clearParamsStale();
 
     const range = getSweepRangeIndices();
     if (!range) {
@@ -1740,8 +1773,7 @@
     kiInput.value = `${sweepBestCandidate.ki}`;
     kdInput.value = `${sweepBestCandidate.kd}`;
     iMaxInput.value = `${sweepBestCandidate.iMax}`;
-    recalcDerivedSeries();
-    scoreCurrentRangeNow();
+    scheduleRecalc('Applied best params. Recomputing derived charts...');
   }
 
   if (!window.uPlot) {
@@ -2025,6 +2057,7 @@
       scales: { x: {}, y: {} },
       series: [
         {
+          label: 'UX badness',
           value: function (u, v) {
             if (!Number.isFinite(v)) return '';
             return formatNum(v, 6);
@@ -2053,7 +2086,12 @@
         {
           label: 'UX badness',
           values: function (u, vals) {
-            return vals.map(function (v) { return formatNum(v, 4); });
+            return vals.map(function (v) {
+              if (!Number.isFinite(v)) return '';
+              const av = Math.abs(v);
+              if (av > 0 && av < 0.001) return formatNum(v, 6);
+              return formatNum(v, 4);
+            });
           }
         },
         {
@@ -2198,19 +2236,27 @@
   if (rangeDateText) rangeDateText.textContent = '';
 
   document.getElementById('applyBtn').addEventListener('click', function () {
-    applyRange(minInput.value, maxInput.value, null);
+    runBusyUiTask('Applying range...', function () {
+      applyRange(minInput.value, maxInput.value, null);
+    });
   });
 
   document.getElementById('resetBtn').addEventListener('click', function () {
-    applyRange(MIN_BLOCK, MAX_BLOCK, null);
+    runBusyUiTask('Resetting to full range...', function () {
+      applyRange(MIN_BLOCK, MAX_BLOCK, null);
+    });
   });
 
   document.getElementById('tail20kBtn').addEventListener('click', function () {
-    applyRange(MAX_BLOCK - 20000, MAX_BLOCK, null);
+    runBusyUiTask('Applying last 20k range...', function () {
+      applyRange(MAX_BLOCK - 20000, MAX_BLOCK, null);
+    });
   });
 
   document.getElementById('tail5kBtn').addEventListener('click', function () {
-    applyRange(MAX_BLOCK - 5000, MAX_BLOCK, null);
+    runBusyUiTask('Applying last 5k range...', function () {
+      applyRange(MAX_BLOCK - 5000, MAX_BLOCK, null);
+    });
   });
 
   document.getElementById('recalcBtn').addEventListener('click', function () {
@@ -2285,15 +2331,28 @@
 
   controllerModeInput.addEventListener('change', function () {
     applyControllerModePreset(controllerModeInput.value || 'alpha-only');
-    scheduleRecalc('Applying controller mode...');
+    markParamsStale('Controller mode changed. Click Recompute derived charts.');
+  });
+
+  autoAlphaInput.addEventListener('change', function () {
+    syncAutoAlphaInputs();
+    markParamsStale('Auto alpha changed. Click Recompute derived charts.');
   });
 
   minInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') applyRange(minInput.value, maxInput.value, null);
+    if (e.key === 'Enter') {
+      runBusyUiTask('Applying range...', function () {
+        applyRange(minInput.value, maxInput.value, null);
+      });
+    }
   });
 
   maxInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') applyRange(minInput.value, maxInput.value, null);
+    if (e.key === 'Enter') {
+      runBusyUiTask('Applying range...', function () {
+        applyRange(minInput.value, maxInput.value, null);
+      });
+    }
   });
 
   [
@@ -2305,7 +2364,6 @@
     l1GasUsedInput,
     numBlobsInput,
     priorityFeeGweiInput,
-    autoAlphaInput,
     alphaGasInput,
     alphaBlobInput,
     dffBlocksInput,
@@ -2323,10 +2381,10 @@
     targetVaultEthInput
   ].forEach(function (el) {
     el.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') scheduleRecalc('Applying parameter changes...');
+      if (e.key === 'Enter') markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     });
     el.addEventListener('change', function () {
-      scheduleRecalc('Applying parameter changes...');
+      markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     });
   });
 
