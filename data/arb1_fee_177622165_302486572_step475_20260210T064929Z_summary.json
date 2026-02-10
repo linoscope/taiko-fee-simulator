@@ -1,0 +1,50 @@
+{
+  "rpc": "https://arbitrum-one-rpc.publicnode.com",
+  "generated_at_utc": "2026-02-10T07:10:04.696620+00:00",
+  "source_window": {
+    "summary_file": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260207T042811Z_summary.json",
+    "start_source": "assumed_start_timestamp_utc",
+    "end_source": "window_end_timestamp_utc",
+    "requested_start_ts": 1707121139,
+    "requested_end_ts": 1738657139,
+    "requested_start_utc": "2024-02-05T08:18:59+00:00",
+    "requested_end_utc": "2025-02-04T08:18:59+00:00"
+  },
+  "chain_head": {
+    "block": 430537501,
+    "timestamp_unix": 1770706146,
+    "timestamp_utc": "2026-02-10T06:49:06+00:00"
+  },
+  "window": {
+    "start_block": 177622165,
+    "end_block": 302486572,
+    "start_timestamp_unix": 1707121139,
+    "end_timestamp_unix": 1738657139,
+    "start_timestamp_utc": "2024-02-05T08:18:59+00:00",
+    "end_timestamp_utc": "2025-02-04T08:18:59+00:00",
+    "block_count": 124864408,
+    "window_seconds": 31536000,
+    "seconds_per_block_estimate": 0.2525619630535549
+  },
+  "sampling": {
+    "sample_seconds_target": 120,
+    "sample_stride_blocks": 475,
+    "sample_count": 262874,
+    "request_batch_size": 200,
+    "min_request_interval_sec": 0.3
+  },
+  "base_fee_gwei": {
+    "p10": 0.01,
+    "p50": 0.01,
+    "p90": 0.1,
+    "p99": 0.28410913999999915,
+    "max": 33.942615
+  },
+  "gas_used_ratio": {
+    "p10": 2.039229229922057e-10,
+    "p50": 9.882636931024535e-10,
+    "p90": 3.9930215578465336e-09,
+    "p99": 1.3706357346876445e-08,
+    "max": 5.181782540830682e-07
+  }
+}

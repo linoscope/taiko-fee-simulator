@@ -1,0 +1,39 @@
+{
+  "generated_at_utc": "2026-02-10T10:49:28.723327+00:00",
+  "html": "/home/lin/workspace/taiko-fee-simulator/data/plots/fee_history_l1_l2_synced.html",
+  "data_js": "/home/lin/workspace/taiko-fee-simulator/data/plots/fee_history_l1_l2_synced_data.js",
+  "l1_csv": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260207T042811Z.csv",
+  "l1_summary": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260207T042811Z_summary.json",
+  "l2_arb_csv": "/home/lin/workspace/taiko-fee-simulator/data/arb1_fee_177622165_302486572_step475_20260210T064929Z.csv",
+  "l2_base_csv": "/home/lin/workspace/taiko-fee-simulator/data/base_fee_10165896_25933896_step60_20260210T102525Z.csv",
+  "window_start_utc": "2024-02-05T08:18:59+00:00",
+  "window_end_utc": "2025-02-04T08:18:59+00:00",
+  "l1_points": 238911,
+  "l2_arb_points": 262874,
+  "l2_base_points": 262801,
+  "l1_stride": 11,
+  "l2_arb_stride": 1,
+  "l2_base_stride": 1,
+  "l1_time_mapping_method": "sampled_anchor_timestamps_from_rpc_interpolation",
+  "l1_seconds_per_block_estimate": 12.078246575342465,
+  "l1_anchor_count": 2,
+  "l1_anchor_stride_blocks": 50000000,
+  "l1_segment_seconds_per_block_stats": {
+    "min": 12.078246575342465,
+    "p50": 12.078246575342465,
+    "p90": 12.078246575342465,
+    "max": 12.078246575342465
+  },
+  "l2_arb_segment_seconds_per_block_stats": {
+    "min": 0.16210526315789472,
+    "p50": 0.2505263157894737,
+    "p90": 0.25684210526315787,
+    "max": 0.4673684210526316
+  },
+  "l2_base_segment_seconds_per_block_stats": {
+    "min": 2.0,
+    "p50": 2.0,
+    "p90": 2.0,
+    "max": 2.0
+  }
+}
