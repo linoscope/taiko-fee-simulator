@@ -1,0 +1,72 @@
+{
+  "generated_at_utc": "2026-02-11T13:13:04.870293+00:00",
+  "synced_summary_input": "/home/lin/workspace/taiko-fee-simulator/data/plots/fee_history_l1_l2_synced_summary.json",
+  "l1_csv": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260207T042811Z.csv",
+  "l1_start_block": 19143898,
+  "l1_end_block": 21771898,
+  "l1_start_ts": 1706915507,
+  "l1_end_ts": 1738657139,
+  "l1_start_utc": "2024-02-02T23:11:47+00:00",
+  "l1_end_utc": "2025-02-04T08:18:59+00:00",
+  "sample_seconds": 300,
+  "chains": {
+    "arbitrum": {
+      "status": "patched_prefix",
+      "existing_csv": "/home/lin/workspace/taiko-fee-simulator/data/arb1_fee_177622165_302486572_step475_20260210T064929Z.csv",
+      "prefix_csv": "/home/lin/workspace/taiko-fee-simulator/data/arb1_fee_176855209_177622164_step1119_20260211T131048Z.csv",
+      "merged_csv": "/home/lin/workspace/taiko-fee-simulator/data/arb1_fee_merged_20260211T131033Z.csv",
+      "missing_start_ts": 1706915507,
+      "missing_end_ts": 1707121138,
+      "rows_written": 263561,
+      "first_block": 176855209,
+      "last_block": 302486572,
+      "first_timestamp_unix": 1706915507,
+      "last_timestamp_unix": 1738657139
+    },
+    "base": {
+      "status": "patched_prefix",
+      "existing_csv": "/home/lin/workspace/taiko-fee-simulator/data/base_fee_10165896_25933896_step60_20260210T102525Z.csv",
+      "prefix_csv": "/home/lin/workspace/taiko-fee-simulator/data/base_fee_10063080_10165895_step150_20260211T131132Z.csv",
+      "merged_csv": "/home/lin/workspace/taiko-fee-simulator/data/base_fee_merged_20260211T131033Z.csv",
+      "missing_start_ts": 1706915507,
+      "missing_end_ts": 1707121138,
+      "rows_written": 263488,
+      "first_block": 10063080,
+      "last_block": 25933896,
+      "first_timestamp_unix": 1706915507,
+      "last_timestamp_unix": 1738657139
+    },
+    "scroll": {
+      "status": "patched_prefix",
+      "existing_csv": "/home/lin/workspace/taiko-fee-simulator/data/scroll_fee_3073547_13188269_step38_20260211T113858Z.csv",
+      "prefix_csv": "/home/lin/workspace/taiko-fee-simulator/data/scroll_fee_3005394_3073546_step99_20260211T131234Z.csv",
+      "merged_csv": "/home/lin/workspace/taiko-fee-simulator/data/scroll_fee_merged_20260211T131033Z.csv",
+      "missing_start_ts": 1706915507,
+      "missing_end_ts": 1707121139,
+      "rows_written": 266868,
+      "first_block": 3005394,
+      "last_block": 13188269,
+      "first_timestamp_unix": 1706915507,
+      "last_timestamp_unix": 1738657139
+    },
+    "linea": {
+      "status": "patched_prefix",
+      "existing_csv": "/home/lin/workspace/taiko-fee-simulator/data/linea_fee_2067205_15411410_step51_20260211T121528Z.csv",
+      "prefix_csv": "/home/lin/workspace/taiko-fee-simulator/data/linea_fee_2015827_2067204_step75_20260211T131257Z.csv",
+      "merged_csv": "/home/lin/workspace/taiko-fee-simulator/data/linea_fee_merged_20260211T131033Z.csv",
+      "missing_start_ts": 1706915507,
+      "missing_end_ts": 1707121140,
+      "rows_written": 262340,
+      "first_block": 2015827,
+      "last_block": 15411410,
+      "first_timestamp_unix": 1706915509,
+      "last_timestamp_unix": 1738657139
+    }
+  },
+  "merged_paths": {
+    "l2_arb_csv": "/home/lin/workspace/taiko-fee-simulator/data/arb1_fee_merged_20260211T131033Z.csv",
+    "l2_base_csv": "/home/lin/workspace/taiko-fee-simulator/data/base_fee_merged_20260211T131033Z.csv",
+    "l2_scroll_csv": "/home/lin/workspace/taiko-fee-simulator/data/scroll_fee_merged_20260211T131033Z.csv",
+    "l2_linea_csv": "/home/lin/workspace/taiko-fee-simulator/data/linea_fee_merged_20260211T131033Z.csv"
+  }
+}

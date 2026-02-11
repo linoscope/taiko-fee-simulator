@@ -40,7 +40,6 @@ DEFAULT_UX_WEIGHT = 0.25
 DEFAULT_HEALTH_W_DRAW = 0.35
 DEFAULT_HEALTH_W_UNDER = 0.25
 DEFAULT_HEALTH_W_AREA = 0.20
-DEFAULT_HEALTH_W_GAP = 0.10
 DEFAULT_HEALTH_W_STREAK = 0.10
 DEFAULT_HEALTH_W_POSTBE = 0.20
 
@@ -54,7 +53,7 @@ DEFAULT_SWEEP_KP_VALUES = [0.0, 0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60]
 DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]
 DEFAULT_SWEEP_KD_VALUES = [0.0]
 DEFAULT_SWEEP_I_MAX_VALUES = [5.0, 10.0, 100.0]
-DEFAULT_SWEEP_MAX_BLOCKS = 360_000
+DEFAULT_SWEEP_MAX_BLOCKS = 200_000
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -330,7 +329,6 @@ def build_app_js():
   const healthWDrawInput = document.getElementById('healthWDraw');
   const healthWUnderInput = document.getElementById('healthWUnder');
   const healthWAreaInput = document.getElementById('healthWArea');
-  const healthWGapInput = document.getElementById('healthWGap');
   const healthWStreakInput = document.getElementById('healthWStreak');
   const healthWPostBEInput = document.getElementById('healthWPostBE');
   const uxWStdInput = document.getElementById('uxWStd');
@@ -364,7 +362,6 @@ def build_app_js():
   const scoreWeightSummary = document.getElementById('scoreWeightSummary');
   const healthMaxDrawdown = document.getElementById('healthMaxDrawdown');
   const healthUnderTargetRatio = document.getElementById('healthUnderTargetRatio');
-  const healthAbsFinalGap = document.getElementById('healthAbsFinalGap');
   const healthPostBreakEvenRatio = document.getElementById('healthPostBreakEvenRatio');
   const healthDeficitAreaBand = document.getElementById('healthDeficitAreaBand');
   const healthWorstDeficitStreak = document.getElementById('healthWorstDeficitStreak');
@@ -498,10 +495,36 @@ def build_app_js():
     }}
   }}
 
-  function updateDatasetQuery(datasetId) {{
+  function selectedRangeFromQuery() {{
+    try {{
+      const params = new URLSearchParams(window.location.search || '');
+      const minRaw = params.get('min');
+      const maxRaw = params.get('max');
+      if (minRaw == null || maxRaw == null) return null;
+      const minVal = Number(minRaw);
+      const maxVal = Number(maxRaw);
+      if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) return null;
+      return {{ min: minVal, max: maxVal }};
+    }} catch (e) {{
+      return null;
+    }}
+  }}
+
+  function updateUrlQueryState(datasetId, minBlock = null, maxBlock = null) {{
     try {{
       const url = new URL(window.location.href);
-      url.searchParams.set('dataset', String(datasetId));
+      if (datasetId != null && datasetId !== '') {{
+        url.searchParams.set('dataset', String(datasetId));
+      }} else {{
+        url.searchParams.delete('dataset');
+      }}
+      if (Number.isFinite(minBlock) && Number.isFinite(maxBlock)) {{
+        url.searchParams.set('min', String(Math.trunc(minBlock)));
+        url.searchParams.set('max', String(Math.trunc(maxBlock)));
+      }} else {{
+        url.searchParams.delete('min');
+        url.searchParams.delete('max');
+      }}
       window.history.replaceState(null, '', url.toString());
     }} catch (e) {{
       // ignore URL update failures
@@ -589,14 +612,19 @@ def build_app_js():
 
       activeDatasetId = id;
       if (datasetRangeInput) datasetRangeInput.value = id;
-      updateDatasetQuery(id);
 
       let nextMin = MIN_BLOCK;
       let nextMax = MAX_BLOCK;
+      const queryDatasetId = selectedDatasetFromQuery();
+      const queryRange = queryDatasetId === id ? selectedRangeFromQuery() : null;
       if (preserveRange) {{
         const savedRange = datasetRangeById[id];
         if (savedRange && savedRange.length === 2) {{
           const clipped = clampRange(savedRange[0], savedRange[1]);
+          nextMin = clipped[0];
+          nextMax = clipped[1];
+        }} else if (queryRange) {{
+          const clipped = clampRange(queryRange.min, queryRange.max);
           nextMin = clipped[0];
           nextMax = clipped[1];
         }} else if (prevRange) {{
@@ -607,6 +635,12 @@ def build_app_js():
             nextMin = clipped[0];
             nextMax = clipped[1];
           }}
+        }}
+      }} else {{
+        if (queryRange) {{
+          const clipped = clampRange(queryRange.min, queryRange.max);
+          nextMin = clipped[0];
+          nextMax = clipped[1];
         }}
       }}
       minInput.value = nextMin;
@@ -835,7 +869,7 @@ def build_app_js():
     if (n <= 0) return null;
 
     const deadbandPct = parsePositive(deficitDeadbandPctInput, {DEFAULT_DEFICIT_DEADBAND_PCT});
-    const deadbandEth = targetVaultEth * (deadbandPct / 100);
+    const deadbandFrac = deadbandPct / 100;
     const feeScale = maxFeeGwei > 0 ? maxFeeGwei : 1;
 
     let maxDrawdownEth = 0;
@@ -858,9 +892,9 @@ def build_app_js():
       const target = derivedVaultTargetEth[i];
       const vault = derivedVaultEth[i];
       const gap = vault - target;
-      const deficitEth = target - vault;
+      const deadbandFloor = target * (1 - deadbandFrac);
 
-      if (gap < 0) {{
+      if (vault < deadbandFloor) {{
         underCount += 1;
         curStreak += 1;
         if (curStreak > worstStreak) worstStreak = curStreak;
@@ -869,7 +903,7 @@ def build_app_js():
       }}
 
       maxDrawdownEth = Math.max(maxDrawdownEth, Math.max(0, -gap));
-      deficitAreaBand += Math.max(0, deficitEth - deadbandEth);
+      deficitAreaBand += Math.max(0, deadbandFloor - vault);
 
       if (derivedClampState[i] === 'max') clampMaxCount += 1;
       const postBreakEven = derivedPostBreakEvenFlag[i];
@@ -904,13 +938,9 @@ def build_app_js():
     const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
     const dPost = 1 - postBreakEvenRatio;
 
-    const finalGapEth = derivedVaultEth[i1] - derivedVaultTargetEth[i1];
-    const absFinalGapEth = Math.abs(finalGapEth);
-
     const dDraw = targetVaultEth > 0 ? (maxDrawdownEth / targetVaultEth) : 0;
     const dUnder = underTargetRatio;
     const dArea = targetVaultEth > 0 ? (deficitAreaBand / (targetVaultEth * n)) : 0;
-    const dGap = targetVaultEth > 0 ? (absFinalGapEth / targetVaultEth) : 0;
     const dStreak = worstStreak / n;
 
     const uStd = feeStd / feeScale;
@@ -925,7 +955,6 @@ def build_app_js():
     const wDraw = parseWeight(healthWDrawInput, {DEFAULT_HEALTH_W_DRAW});
     const wUnder = parseWeight(healthWUnderInput, {DEFAULT_HEALTH_W_UNDER});
     const wArea = parseWeight(healthWAreaInput, {DEFAULT_HEALTH_W_AREA});
-    const wGap = parseWeight(healthWGapInput, {DEFAULT_HEALTH_W_GAP});
     const wStreak = parseWeight(healthWStreakInput, {DEFAULT_HEALTH_W_STREAK});
     const wPostBE = parseWeight(healthWPostBEInput, {DEFAULT_HEALTH_W_POSTBE});
 
@@ -940,8 +969,8 @@ def build_app_js():
     const wUx = parseWeight(scoreWeightUxInput, {DEFAULT_UX_WEIGHT});
 
     const healthBadness = normalizedWeightedSum(
-      [dDraw, dUnder, dArea, dGap, dStreak, dPost],
-      [wDraw, wUnder, wArea, wGap, wStreak, wPostBE]
+      [dDraw, dUnder, dArea, dStreak, dPost],
+      [wDraw, wUnder, wArea, wStreak, wPostBE]
     );
     const uxBadness = normalizedWeightedSum(
       [uStd, uP95, uP99, uMax, uClamp, uLevel],
@@ -957,7 +986,6 @@ def build_app_js():
 
     healthMaxDrawdown.textContent = `${{formatNum(maxDrawdownEth, 6)}} ETH`;
     healthUnderTargetRatio.textContent = `${{formatNum(underTargetRatio, 4)}}`;
-    healthAbsFinalGap.textContent = `${{formatNum(absFinalGapEth, 6)}} ETH`;
     healthPostBreakEvenRatio.textContent = `${{formatNum(postBreakEvenRatio, 4)}}`;
     healthDeficitAreaBand.textContent = `${{formatNum(deficitAreaBand, 6)}} ETH*block`;
     healthWorstDeficitStreak.textContent = `${{formatNum(worstStreak, 0)}} blocks`;
@@ -970,8 +998,8 @@ def build_app_js():
     uxFeeLevelMean.textContent = `${{formatNum(uLevel, 4)}}`;
 
     healthFormulaLine.textContent =
-      `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wGap*dGap + wStreak*dStreak + wPostBE*dPost ` +
-      `(dDraw=${{formatNum(dDraw, 4)}}, dUnder=${{formatNum(dUnder, 4)}}, dArea=${{formatNum(dArea, 4)}}, dGap=${{formatNum(dGap, 4)}}, dStreak=${{formatNum(dStreak, 4)}}, dPost=${{formatNum(dPost, 4)}})`;
+      `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wStreak*dStreak + wPostBE*dPost ` +
+      `(dDraw=${{formatNum(dDraw, 4)}}, dUnder=${{formatNum(dUnder, 4)}}, dArea=${{formatNum(dArea, 4)}}, dStreak=${{formatNum(dStreak, 4)}}, dPost=${{formatNum(dPost, 4)}})`;
     uxFormulaLine.textContent =
       `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp + wLevel*uLevel ` +
       `(uStd=${{formatNum(uStd, 4)}}, uP95=${{formatNum(uP95, 4)}}, uP99=${{formatNum(uP99, 4)}}, uMax=${{formatNum(uMax, 4)}}, uClamp=${{formatNum(uClamp, 4)}}, uLevel=${{formatNum(uLevel, 4)}})`;
@@ -1243,7 +1271,6 @@ def build_app_js():
       wDraw: parseWeight(healthWDrawInput, {DEFAULT_HEALTH_W_DRAW}),
       wUnder: parseWeight(healthWUnderInput, {DEFAULT_HEALTH_W_UNDER}),
       wArea: parseWeight(healthWAreaInput, {DEFAULT_HEALTH_W_AREA}),
-      wGap: parseWeight(healthWGapInput, {DEFAULT_HEALTH_W_GAP}),
       wStreak: parseWeight(healthWStreakInput, {DEFAULT_HEALTH_W_STREAK}),
       wPostBE: parseWeight(healthWPostBEInput, {DEFAULT_HEALTH_W_POSTBE}),
       wStd: parseWeight(uxWStdInput, {DEFAULT_UX_W_STD}),
@@ -1719,15 +1746,14 @@ def build_app_js():
       const gap = vault - simCfg.targetVaultEth;
       if (-gap > maxDrawdownEth) maxDrawdownEth = -gap;
 
-      if (vault < simCfg.targetVaultEth) {{
+      if (vault < deadbandFloor) {{
         underTargetCount += 1;
         currentStreak += 1;
         if (currentStreak > worstStreak) worstStreak = currentStreak;
       }} else {{
         currentStreak = 0;
       }}
-
-      if (vault < deadbandFloor) deficitAreaBand += (deadbandFloor - vault);
+      deficitAreaBand += Math.max(0, deadbandFloor - vault);
       epsilonPrev = epsilon;
     }}
 
@@ -1735,7 +1761,6 @@ def build_app_js():
     const underTargetRatio = n > 0 ? (underTargetCount / n) : 0;
     const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
     const dPost = 1 - postBreakEvenRatio;
-    const absFinalGapEth = Math.abs(lastVault - simCfg.targetVaultEth);
     const meanFee = feeCount > 0 ? (feeSum / feeCount) : 0;
     const variance = feeCount > 0 ? Math.max(0, (feeSumSq / feeCount) - meanFee * meanFee) : 0;
     const feeStd = Math.sqrt(variance);
@@ -1748,11 +1773,10 @@ def build_app_js():
     const dDraw = maxDrawdownEth / targetDenom;
     const dUnder = underTargetRatio;
     const dArea = deficitAreaBand / (targetDenom * n);
-    const dGap = absFinalGapEth / targetDenom;
     const dStreak = n > 0 ? (worstStreak / n) : 0;
     const healthBadness = normalizedWeightedSum(
-      [dDraw, dUnder, dArea, dGap, dStreak, dPost],
-      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wGap, scoreCfg.wStreak, scoreCfg.wPostBE]
+      [dDraw, dUnder, dArea, dStreak, dPost],
+      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wStreak, scoreCfg.wPostBE]
     );
 
     const uStd = feeStd / feeDenom;
@@ -1789,7 +1813,6 @@ def build_app_js():
       maxDrawdownEth,
       underTargetRatio,
       postBreakEvenRatio,
-      absFinalGapEth,
       feeStd,
       stepP95,
       stepP99,
@@ -2503,6 +2526,7 @@ def build_app_js():
     minInput.value = minB;
     maxInput.value = maxB;
     if (activeDatasetId) datasetRangeById[activeDatasetId] = [minB, maxB];
+    updateUrlQueryState(activeDatasetId, minB, maxB);
     updateRangeText(minB, maxB);
 
     syncing = true;
@@ -2783,7 +2807,6 @@ def build_app_js():
     healthWDrawInput,
     healthWUnderInput,
     healthWAreaInput,
-    healthWGapInput,
     healthWStreakInput,
     healthWPostBEInput,
     uxWStdInput,
@@ -3269,8 +3292,7 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
           <div class=\"score-subtitle\">Important Health Metrics</div>
           <div class=\"score-kpis\">
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Max drawdown</div><div class=\"score-kpi-value\" id=\"healthMaxDrawdown\">-</div></div>
-            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Under-target ratio</div><div class=\"score-kpi-value\" id=\"healthUnderTargetRatio\">-</div></div>
-            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Abs final gap</div><div class=\"score-kpi-value\" id=\"healthAbsFinalGap\">-</div></div>
+            <div class=\"score-kpi\"><div class=\"score-kpi-label\">Below-deadband ratio</div><div class=\"score-kpi-value\" id=\"healthUnderTargetRatio\">-</div></div>
             <div class=\"score-kpi\"><div class=\"score-kpi-label\">Post break-even ratio</div><div class=\"score-kpi-value\" id=\"healthPostBreakEvenRatio\">-</div></div>
           </div>
           <div class=\"score-subtitle\">Important UX Metrics</div>
@@ -3285,7 +3307,6 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
             <label>Health w_draw <input id=\"healthWDraw\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_DRAW:g}\" /></label>
             <label>Health w_under <input id=\"healthWUnder\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_UNDER:g}\" /></label>
             <label>Health w_area <input id=\"healthWArea\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_AREA:g}\" /></label>
-            <label>Health w_gap <input id=\"healthWGap\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_GAP:g}\" /></label>
             <label>Health w_streak <input id=\"healthWStreak\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_STREAK:g}\" /></label>
             <label>Health w_postBE <input id=\"healthWPostBE\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_HEALTH_W_POSTBE:g}\" /></label>
             <label>UX w_std <input id=\"uxWStd\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_UX_W_STD:g}\" /></label>
@@ -3362,13 +3383,12 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
       <div class=\"help-body\">
         <p><strong>Goal:</strong> compare controller settings over the selected block range. Lower score is better.</p>
         <p><code>total_badness = weighted_mean(health_badness, ux_badness)</code></p>
-        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dGap, dStreak, dPost)</code></p>
+        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dStreak, dPost)</code></p>
         <ul>
           <li><code>dDraw</code>: max under-target gap, normalized by target vault</li>
-          <li><code>dUnder</code>: fraction of blocks with vault below target</li>
+          <li><code>dUnder</code>: fraction of blocks with vault below deadband floor</li>
           <li><code>dArea</code>: deadbanded deficit area, normalized by target and range length</li>
-          <li><code>dGap</code>: absolute final vault-target gap, normalized by target</li>
-          <li><code>dStreak</code>: longest consecutive under-target run, normalized by range length</li>
+          <li><code>dStreak</code>: longest consecutive below-deadband run, normalized by range length</li>
           <li><code>dPost</code>: fraction of posting events that do not break even</li>
         </ul>
         <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp, uLevel)</code></p>

@@ -1,0 +1,50 @@
+{
+  "rpc": "https://mainnet.base.org",
+  "generated_at_utc": "2026-02-11T13:12:14.354483+00:00",
+  "source_window": {
+    "summary_file": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260207T042811Z_summary.json",
+    "start_source": "cli:start_ts",
+    "end_source": "cli:end_ts",
+    "requested_start_ts": 1706915507,
+    "requested_end_ts": 1707121138,
+    "requested_start_utc": "2024-02-02T23:11:47+00:00",
+    "requested_end_utc": "2024-02-05T08:18:58+00:00"
+  },
+  "chain_head": {
+    "block": 42013065,
+    "timestamp_unix": 1770815477,
+    "timestamp_utc": "2026-02-11T13:11:17+00:00"
+  },
+  "window": {
+    "start_block": 10063080,
+    "end_block": 10165895,
+    "start_timestamp_unix": 1706915507,
+    "end_timestamp_unix": 1707121137,
+    "start_timestamp_utc": "2024-02-02T23:11:47+00:00",
+    "end_timestamp_utc": "2024-02-05T08:18:57+00:00",
+    "block_count": 102816,
+    "window_seconds": 205630,
+    "seconds_per_block_estimate": 1.9999805477746655
+  },
+  "sampling": {
+    "sample_seconds_target": 300,
+    "sample_stride_blocks": 150,
+    "sample_count": 687,
+    "request_batch_size": 10,
+    "min_request_interval_sec": 0.8
+  },
+  "base_fee_gwei": {
+    "p10": 2.73e-07,
+    "p50": 3.09e-07,
+    "p90": 5.1e-07,
+    "p99": 2.008854e-05,
+    "max": 2.0232e-05
+  },
+  "gas_used_ratio": {
+    "p10": 0.023135706666666665,
+    "p50": 0.053467633333333334,
+    "p90": 0.10901795333333333,
+    "p99": 0.8394890646666665,
+    "max": 0.987287
+  }
+}

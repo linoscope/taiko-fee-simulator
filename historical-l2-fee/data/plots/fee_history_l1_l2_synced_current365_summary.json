@@ -1,0 +1,52 @@
+{
+  "generated_at_utc": "2026-02-11T16:49:44.087050+00:00",
+  "html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_current365.html",
+  "data_js": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_data_current365.js",
+  "l1_csv": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260206T195430Z.csv",
+  "l1_summary": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l1/eth_l1_fee_365d_20260206T195430Z_summary_true_window.json",
+  "l2_arb_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/arb1_fee_302486616_429334875_step479_20260211T134828Z.csv",
+  "l2_base_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/base_fee_25933902_41808552_step60_20260211T135212Z.csv",
+  "l2_scroll_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/scroll_fee_13188273_29645724_step62_20260211T135027Z.csv",
+  "l2_optimism_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/optimism_fee_131529187_147403837_step60_20260211T150257Z.csv",
+  "window_start_utc": "2025-02-04T08:19:11+00:00",
+  "window_end_utc": "2026-02-06T19:34:10+00:00",
+  "l1_points": 238911,
+  "l2_arb_points": 264820,
+  "l2_base_points": 264579,
+  "l2_scroll_points": 265444,
+  "l2_optimism_points": 264579,
+  "l1_stride": 11,
+  "l2_arb_stride": 1,
+  "l2_base_stride": 1,
+  "l2_scroll_stride": 1,
+  "l2_optimism_stride": 1,
+  "l1_time_mapping_method": "global_linear_from_summary_window",
+  "l1_seconds_per_block_estimate": 12.081164383561644,
+  "l1_anchor_count": null,
+  "l1_anchor_stride_blocks": null,
+  "l1_segment_seconds_per_block_stats": null,
+  "l2_arb_segment_seconds_per_block_stats": {
+    "min": 0.21294363256784968,
+    "p50": 0.25052192066805845,
+    "p90": 0.25260960334029225,
+    "max": 0.35281837160751567
+  },
+  "l2_base_segment_seconds_per_block_stats": {
+    "min": 2.0,
+    "p50": 2.0,
+    "p90": 2.0,
+    "max": 2.0
+  },
+  "l2_scroll_segment_seconds_per_block_stats": {
+    "min": 0.43548387096774194,
+    "p50": 1.5161290322580645,
+    "p90": 3.661290322580645,
+    "max": 28.838709677419356
+  },
+  "l2_optimism_segment_seconds_per_block_stats": {
+    "min": 2.0,
+    "p50": 2.0,
+    "p90": 2.0,
+    "max": 2.0
+  }
+}

@@ -399,8 +399,7 @@
           <div class="score-subtitle">Important Health Metrics</div>
           <div class="score-kpis">
             <div class="score-kpi"><div class="score-kpi-label">Max drawdown</div><div class="score-kpi-value" id="healthMaxDrawdown">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Under-target ratio</div><div class="score-kpi-value" id="healthUnderTargetRatio">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Abs final gap</div><div class="score-kpi-value" id="healthAbsFinalGap">-</div></div>
+            <div class="score-kpi"><div class="score-kpi-label">Below-deadband ratio</div><div class="score-kpi-value" id="healthUnderTargetRatio">-</div></div>
             <div class="score-kpi"><div class="score-kpi-label">Post break-even ratio</div><div class="score-kpi-value" id="healthPostBreakEvenRatio">-</div></div>
           </div>
           <div class="score-subtitle">Important UX Metrics</div>
@@ -415,7 +414,6 @@
             <label>Health w_draw <input id="healthWDraw" type="number" min="0" step="0.01" value="0.35" /></label>
             <label>Health w_under <input id="healthWUnder" type="number" min="0" step="0.01" value="0.25" /></label>
             <label>Health w_area <input id="healthWArea" type="number" min="0" step="0.01" value="0.2" /></label>
-            <label>Health w_gap <input id="healthWGap" type="number" min="0" step="0.01" value="0.1" /></label>
             <label>Health w_streak <input id="healthWStreak" type="number" min="0" step="0.01" value="0.1" /></label>
             <label>Health w_postBE <input id="healthWPostBE" type="number" min="0" step="0.01" value="0.2" /></label>
             <label>UX w_std <input id="uxWStd" type="number" min="0" step="0.01" value="0.2" /></label>
@@ -492,13 +490,12 @@
       <div class="help-body">
         <p><strong>Goal:</strong> compare controller settings over the selected block range. Lower score is better.</p>
         <p><code>total_badness = weighted_mean(health_badness, ux_badness)</code></p>
-        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dGap, dStreak, dPost)</code></p>
+        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dStreak, dPost)</code></p>
         <ul>
           <li><code>dDraw</code>: max under-target gap, normalized by target vault</li>
-          <li><code>dUnder</code>: fraction of blocks with vault below target</li>
+          <li><code>dUnder</code>: fraction of blocks with vault below deadband floor</li>
           <li><code>dArea</code>: deadbanded deficit area, normalized by target and range length</li>
-          <li><code>dGap</code>: absolute final vault-target gap, normalized by target</li>
-          <li><code>dStreak</code>: longest consecutive under-target run, normalized by range length</li>
+          <li><code>dStreak</code>: longest consecutive below-deadband run, normalized by range length</li>
           <li><code>dPost</code>: fraction of posting events that do not break even</li>
         </ul>
         <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp, uLevel)</code></p>

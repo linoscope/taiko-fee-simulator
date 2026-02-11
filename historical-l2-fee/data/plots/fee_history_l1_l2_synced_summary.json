@@ -1,0 +1,16 @@
+{
+  "generated_at_utc": "2026-02-11T16:38:44.454797+00:00",
+  "switcher_html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced.html",
+  "datasets": {
+    "current365": {
+      "html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_current365.html",
+      "data_js": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_data_current365.js",
+      "summary": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_current365_summary.json"
+    },
+    "prior365": {
+      "html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_prior365.html",
+      "data_js": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_data_prior365.js",
+      "summary": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_prior365_summary.json"
+    }
+  }
+}

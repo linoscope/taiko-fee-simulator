@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>L1 + L2 Fee History (Synced by Time) - current365</title>
+  <link rel="stylesheet" href="./uPlot.min.css" />
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --line: #dbe3ef;
+      --accent: #0f766e;
+      --accent-2: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #eef2ff 0%, var(--bg) 35%, var(--bg) 100%);
+    }
+    .wrap { max-width: 1440px; margin: 18px auto; padding: 0 16px 24px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+    }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    .sub { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+    input[type=datetime-local] { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; min-width: 210px; }
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button.primary { border-color: transparent; background: var(--accent); color: #fff; }
+    .meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .range-text { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .status { margin: 4px 0 0; min-height: 18px; font-size: 12px; color: #b45309; }
+    .plot {
+      width: 100%;
+      min-height: 300px;
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 6px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>L1 + L2 Fee History (Synced by Time) - current365</h1>
+      <p class="sub">
+        Drag in any chart to zoom x-range. All charts stay synchronized on UTC timestamps.
+      </p>
+      <div class="controls">
+        <label>Start (local) <input id="startTime" type="datetime-local" /></label>
+        <label>End (local) <input id="endTime" type="datetime-local" /></label>
+        <button class="primary" id="applyBtn">Apply range</button>
+        <button id="resetBtn">Reset full range</button>
+        <button id="last30dBtn">Last 30d</button>
+        <button id="last7dBtn">Last 7d</button>
+        <span class="range-text" id="rangeText"></span>
+      </div>
+      <div class="meta">
+        <span id="metaL1"></span>
+        <span id="metaL2Arb"></span>
+        <span id="metaL2Base"></span>
+        <span id="metaL2Op"></span>
+        <span id="metaL2Scroll"></span>
+      </div>
+      <div class="status" id="status"></div>
+      <div id="l1BasePlot" class="plot"></div>
+      <div id="l1BlobPlot" class="plot"></div>
+      <div id="l2ArbBasePlot" class="plot"></div>
+      <div id="l2BaseBasePlot" class="plot"></div>
+      <div id="l2OpBasePlot" class="plot"></div>
+      <div id="l2ScrollBasePlot" class="plot"></div>
+    </div>
+  </div>
+  <script src="./uPlot.iife.min.js"></script>
+  <script src="./fee_history_l1_l2_synced_data_current365.js"></script>
+  <script>
+(function () {
+  const payload = window.__l1L2SyncedPayload;
+  const statusEl = document.getElementById('status');
+  const rangeTextEl = document.getElementById('rangeText');
+  const metaL1El = document.getElementById('metaL1');
+  const metaL2ArbEl = document.getElementById('metaL2Arb');
+  const metaL2BaseEl = document.getElementById('metaL2Base');
+  const metaL2OpEl = document.getElementById('metaL2Op');
+  const metaL2ScrollEl = document.getElementById('metaL2Scroll');
+  const startInput = document.getElementById('startTime');
+  const endInput = document.getElementById('endTime');
+
+  function setStatus(msg) {
+    statusEl.textContent = msg || '';
+  }
+
+  if (!payload) {
+    setStatus('Missing data payload. Ensure data JS is loaded.');
+    return;
+  }
+  if (!window.uPlot) {
+    setStatus('uPlot failed to load. Open this file from data/plots so local JS files resolve.');
+    return;
+  }
+
+  const l1 = payload.l1;
+  const l2Arb = payload.l2Arb;
+  const l2BaseChain = payload.l2Base;
+  const l2ScrollChain = payload.l2Scroll;
+  const l2OpChain = payload.l2Optimism;
+  const meta = payload.meta || {};
+
+  const l1X = l1.xSec;
+  const l1Base = l1.baseFeeGwei;
+  const l1Blob = l1.blobFeeGwei;
+  const l2ArbX = l2Arb.xSec;
+  const l2ArbBase = l2Arb.baseFeeGwei;
+  const l2BaseX = l2BaseChain.xSec;
+  const l2BaseFee = l2BaseChain.baseFeeGwei;
+  const l2ScrollX = l2ScrollChain.xSec;
+  const l2ScrollFee = l2ScrollChain.baseFeeGwei;
+  const l2OpX = l2OpChain.xSec;
+  const l2OpFee = l2OpChain.baseFeeGwei;
+
+  if (!l1X.length || !l2ArbX.length || !l2BaseX.length || !l2ScrollX.length || !l2OpX.length) {
+    setStatus('Dataset is empty.');
+    return;
+  }
+
+  const MIN_X = Math.max(l1X[0], l2ArbX[0], l2BaseX[0], l2ScrollX[0], l2OpX[0]);
+  const MAX_X = Math.min(
+    l1X[l1X.length - 1],
+    l2ArbX[l2ArbX.length - 1],
+    l2BaseX[l2BaseX.length - 1],
+    l2ScrollX[l2ScrollX.length - 1],
+    l2OpX[l2OpX.length - 1]
+  );
+
+  if (!(MIN_X < MAX_X)) {
+    setStatus('Invalid time overlap between datasets.');
+    return;
+  }
+
+  metaL1El.textContent = `L1: ${l1X.length.toLocaleString()} points (stride ${meta.l1.stride} blocks)`;
+  metaL2ArbEl.textContent = `L2 Arbitrum: ${l2ArbX.length.toLocaleString()} points (stride ${meta.l2Arbitrum.stride} sampled rows)`;
+  metaL2BaseEl.textContent = `L2 Base: ${l2BaseX.length.toLocaleString()} points (stride ${meta.l2Base.stride} sampled rows)`;
+  metaL2OpEl.textContent = `L2 Optimism: ${l2OpX.length.toLocaleString()} points (stride ${meta.l2Optimism.stride} sampled rows)`;
+  metaL2ScrollEl.textContent = `L2 Scroll: ${l2ScrollX.length.toLocaleString()} points (stride ${meta.l2Scroll.stride} sampled rows)`;
+
+  const l1BaseWrap = document.getElementById('l1BasePlot');
+  const l1BlobWrap = document.getElementById('l1BlobPlot');
+  const l2ArbBaseWrap = document.getElementById('l2ArbBasePlot');
+  const l2BaseBaseWrap = document.getElementById('l2BaseBasePlot');
+  const l2OpBaseWrap = document.getElementById('l2OpBasePlot');
+  const l2ScrollBaseWrap = document.getElementById('l2ScrollBasePlot');
+
+  function pad2(n) {
+    return String(n).padStart(2, '0');
+  }
+
+  function secToUtcIso(sec) {
+    return new Date(sec * 1000).toISOString().replace('.000Z', 'Z');
+  }
+
+  function secToLocalInputValue(sec) {
+    const d = new Date(sec * 1000);
+    return (
+      String(d.getFullYear()) + '-' +
+      pad2(d.getMonth() + 1) + '-' +
+      pad2(d.getDate()) + 'T' +
+      pad2(d.getHours()) + ':' +
+      pad2(d.getMinutes())
+    );
+  }
+
+  function localInputValueToSec(value) {
+    if (!value) return null;
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms)) return null;
+    return Math.floor(ms / 1000);
+  }
+
+  function formatAxisSec(sec) {
+    const d = new Date(sec * 1000);
+    return (
+      String(d.getUTCFullYear()) + '-' +
+      pad2(d.getUTCMonth() + 1) + '-' +
+      pad2(d.getUTCDate()) + '\n' +
+      pad2(d.getUTCHours()) + ':' +
+      pad2(d.getUTCMinutes()) + ':' +
+      pad2(d.getUTCSeconds())
+    );
+  }
+
+  function formatGwei(value, maxDecimals) {
+    if (!Number.isFinite(value)) return '--';
+    const abs = Math.abs(value);
+    let decimals = 2;
+    if (abs === 0) decimals = 0;
+    else if (abs < 1e-6) decimals = Math.min(maxDecimals, 9);
+    else if (abs < 1e-5) decimals = Math.min(maxDecimals, 8);
+    else if (abs < 1e-4) decimals = Math.min(maxDecimals, 7);
+    else if (abs < 1e-3) decimals = Math.min(maxDecimals, 6);
+    else if (abs < 1e-2) decimals = Math.min(maxDecimals, 5);
+    else if (abs < 1e-1) decimals = Math.min(maxDecimals, 4);
+    else if (abs < 1) decimals = Math.min(maxDecimals, 4);
+    else if (abs < 10) decimals = Math.min(maxDecimals, 3);
+    else if (abs < 100) decimals = Math.min(maxDecimals, 2);
+    else if (abs < 1000) decimals = Math.min(maxDecimals, 1);
+    else decimals = 0;
+    return value.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: decimals,
+    });
+  }
+
+  function clampRange(a, b) {
+    let lo = Number(a);
+    let hi = Number(b);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [MIN_X, MAX_X];
+    if (lo > hi) {
+      const t = lo;
+      lo = hi;
+      hi = t;
+    }
+    lo = Math.max(MIN_X, Math.min(MAX_X, Math.floor(lo)));
+    hi = Math.max(MIN_X, Math.min(MAX_X, Math.floor(hi)));
+    if (lo === hi) hi = Math.min(MAX_X, lo + 1);
+    return [lo, hi];
+  }
+
+  function updateRangeUi(lo, hi) {
+    startInput.value = secToLocalInputValue(lo);
+    endInput.value = secToLocalInputValue(hi);
+    const days = (hi - lo) / 86400;
+    rangeTextEl.textContent = `UTC ${secToUtcIso(lo)} -> ${secToUtcIso(hi)} (${days.toFixed(2)} days)`;
+  }
+
+  function makeOpts(title, seriesLabel, strokeColor, width, height, valueMaxDecimals) {
+    const maxDecimals = Number.isFinite(valueMaxDecimals) ? valueMaxDecimals : 4;
+    return {
+      title: title,
+      width: width,
+      height: height,
+      scales: { x: { time: false } },
+      series: [
+        {},
+        {
+          label: seriesLabel,
+          stroke: strokeColor,
+          width: 1.2,
+          value: (u, v) => formatGwei(v, maxDecimals)
+        }
+      ],
+      axes: [
+        { label: 'UTC time', values: (u, splits) => splits.map(formatAxisSec) },
+        { label: 'gwei', values: (u, splits) => splits.map((v) => formatGwei(v, maxDecimals)) }
+      ],
+      cursor: { drag: { x: true, y: false, setScale: true } },
+      hooks: { setScale: [onSetScale] }
+    };
+  }
+
+  function plotWidthFor(wrap) {
+    return Math.max(540, wrap.clientWidth - 8);
+  }
+
+  let syncing = false;
+  let l1BasePlot = null;
+  let l1BlobPlot = null;
+  let l2ArbBasePlot = null;
+  let l2BaseBasePlot = null;
+  let l2OpBasePlot = null;
+  let l2ScrollBasePlot = null;
+  
+
+  function allPlots() {
+    return [l1BasePlot, l1BlobPlot, l2ArbBasePlot, l2BaseBasePlot, l2OpBasePlot, l2ScrollBasePlot].filter(Boolean);
+  }
+
+  function setAllXRange(minSec, maxSec, sourcePlot) {
+    const clamped = clampRange(minSec, maxSec);
+    const lo = clamped[0];
+    const hi = clamped[1];
+
+    syncing = true;
+    for (const p of allPlots()) {
+      if (sourcePlot && p === sourcePlot) continue;
+      p.setScale('x', { min: lo, max: hi });
+    }
+    syncing = false;
+    updateRangeUi(lo, hi);
+  }
+
+  function onSetScale(u, key) {
+    if (key !== 'x' || syncing) return;
+    const lo = u.scales.x.min;
+    const hi = u.scales.x.max;
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
+    setAllXRange(lo, hi, u);
+  }
+
+  function resizePlots() {
+    const w1 = plotWidthFor(l1BaseWrap);
+    const w2 = plotWidthFor(l1BlobWrap);
+    const w3 = plotWidthFor(l2ArbBaseWrap);
+    const w4 = plotWidthFor(l2BaseBaseWrap);
+    const w5 = plotWidthFor(l2OpBaseWrap);
+    const w6 = plotWidthFor(l2ScrollBaseWrap);
+    if (l1BasePlot) l1BasePlot.setSize({ width: w1, height: 300 });
+    if (l1BlobPlot) l1BlobPlot.setSize({ width: w2, height: 300 });
+    if (l2ArbBasePlot) l2ArbBasePlot.setSize({ width: w3, height: 300 });
+    if (l2BaseBasePlot) l2BaseBasePlot.setSize({ width: w4, height: 300 });
+    if (l2OpBasePlot) l2OpBasePlot.setSize({ width: w5, height: 300 });
+    if (l2ScrollBasePlot) l2ScrollBasePlot.setSize({ width: w6, height: 300 });
+  }
+
+  l1BasePlot = new uPlot(
+    makeOpts('L1 Base Fee History', 'L1 base fee (gwei)', '#2563eb', plotWidthFor(l1BaseWrap), 300, 4),
+    [l1X, l1Base],
+    l1BaseWrap
+  );
+
+  l1BlobPlot = new uPlot(
+    makeOpts('L1 Blob Fee History', 'L1 blob fee (gwei)', '#f97316', plotWidthFor(l1BlobWrap), 300, 4),
+    [l1X, l1Blob],
+    l1BlobWrap
+  );
+
+  l2ArbBasePlot = new uPlot(
+    makeOpts('L2 Base Fee History (Arbitrum)', 'L2 base fee (gwei)', '#0f766e', plotWidthFor(l2ArbBaseWrap), 300, 5),
+    [l2ArbX, l2ArbBase],
+    l2ArbBaseWrap
+  );
+
+  l2BaseBasePlot = new uPlot(
+    makeOpts('L2 Base Fee History (Base)', 'L2 base fee (gwei)', '#dc2626', plotWidthFor(l2BaseBaseWrap), 300, 5),
+    [l2BaseX, l2BaseFee],
+    l2BaseBaseWrap
+  );
+
+  l2OpBasePlot = new uPlot(
+    makeOpts('L2 Base Fee History (Optimism)', 'L2 base fee (gwei)', '#0891b2', plotWidthFor(l2OpBaseWrap), 300, 5),
+    [l2OpX, l2OpFee],
+    l2OpBaseWrap
+  );
+
+  l2ScrollBasePlot = new uPlot(
+    makeOpts('L2 Base Fee History (Scroll)', 'L2 base fee (gwei)', '#16a34a', plotWidthFor(l2ScrollBaseWrap), 300, 9),
+    [l2ScrollX, l2ScrollFee],
+    l2ScrollBaseWrap
+  );
+
+  updateRangeUi(MIN_X, MAX_X);
+  setAllXRange(MIN_X, MAX_X, null);
+
+  document.getElementById('applyBtn').addEventListener('click', function () {
+    const startSec = localInputValueToSec(startInput.value);
+    const endSec = localInputValueToSec(endInput.value);
+    setAllXRange(startSec, endSec, null);
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', function () {
+    setAllXRange(MIN_X, MAX_X, null);
+  });
+
+  document.getElementById('last30dBtn').addEventListener('click', function () {
+    setAllXRange(MAX_X - 30 * 86400, MAX_X, null);
+  });
+
+  document.getElementById('last7dBtn').addEventListener('click', function () {
+    setAllXRange(MAX_X - 7 * 86400, MAX_X, null);
+  });
+
+  startInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      const startSec = localInputValueToSec(startInput.value);
+      const endSec = localInputValueToSec(endInput.value);
+      setAllXRange(startSec, endSec, null);
+    }
+  });
+
+  endInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      const startSec = localInputValueToSec(startInput.value);
+      const endSec = localInputValueToSec(endInput.value);
+      setAllXRange(startSec, endSec, null);
+    }
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resizePlots, 120);
+  });
+
+  setStatus('');
+})();
+  </script>
+</body>
+</html>
