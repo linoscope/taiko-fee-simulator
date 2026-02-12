@@ -1,0 +1,50 @@
+{
+  "rpc": "https://worldchain-mainnet.g.alchemy.com/public",
+  "generated_at_utc": "2026-02-11T17:22:11.900107+00:00",
+  "source_window": {
+    "summary_file": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l1/eth_l1_fee_365d_20260207T042811Z_summary_true_window.json",
+    "start_source": "window_start_timestamp_utc",
+    "end_source": "window_end_timestamp_utc",
+    "requested_start_ts": 1706915507,
+    "requested_end_ts": 1738657139,
+    "requested_start_utc": "2024-02-02T23:11:47+00:00",
+    "requested_end_utc": "2025-02-04T08:18:59+00:00"
+  },
+  "chain_head": {
+    "block": 25747019,
+    "timestamp_unix": 1770829677,
+    "timestamp_utc": "2026-02-11T17:07:57+00:00"
+  },
+  "window": {
+    "start_block": 0,
+    "end_block": 9660750,
+    "start_timestamp_unix": 1719335639,
+    "end_timestamp_unix": 1738657139,
+    "start_timestamp_utc": "2024-06-25T17:13:59+00:00",
+    "end_timestamp_utc": "2025-02-04T08:18:59+00:00",
+    "block_count": 9660751,
+    "window_seconds": 19321500,
+    "seconds_per_block_estimate": 1.9999997929767572
+  },
+  "sampling": {
+    "sample_seconds_target": 120,
+    "sample_stride_blocks": 60,
+    "sample_count": 161014,
+    "request_batch_size": 100,
+    "min_request_interval_sec": 0.2
+  },
+  "base_fee_gwei": {
+    "p10": 2.51e-07,
+    "p50": 2.51e-07,
+    "p90": 3.23e-07,
+    "p99": 0.00100330183,
+    "max": 1.0
+  },
+  "gas_used_ratio": {
+    "p10": 0.00043839,
+    "p50": 0.014666215,
+    "p90": 0.06079670400000003,
+    "p99": 0.19624634,
+    "max": 0.2982569
+  }
+}
