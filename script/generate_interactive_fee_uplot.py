@@ -11,6 +11,7 @@ import requests
 
 L1_BLOCK_TIME_SECONDS = 12
 BLOB_GAS_PER_BLOB = 131_072
+ERC20_TRANSFER_GAS = 70_000
 
 DEFAULT_POST_EVERY_BLOCKS = 10
 DEFAULT_L2_GAS_PER_L2_BLOCK = 1_000_000
@@ -253,9 +254,11 @@ def read_time_anchor(
 def build_app_js():
     return f"""(function () {{
   const BLOB_GAS_PER_BLOB = {BLOB_GAS_PER_BLOB};
+  const ERC20_TRANSFER_GAS = {ERC20_TRANSFER_GAS};
   const L1_BLOCK_TIME_SECONDS = {L1_BLOCK_TIME_SECONDS};
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
+  const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
   const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
   const SWEEP_ALPHA_VARIANTS = Object.freeze(['current', 'zero']);
@@ -300,6 +303,7 @@ def build_app_js():
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
   const l2GasPerL2BlockInput = document.getElementById('l2GasPerL2Block');
+  const l2TpsInput = document.getElementById('l2Tps');
   const l2BlockTimeSecInput = document.getElementById('l2BlockTimeSec');
   const l2GasScenarioInput = document.getElementById('l2GasScenario');
   const l2DemandRegimeInput = document.getElementById('l2DemandRegime');
@@ -1120,6 +1124,72 @@ def build_app_js():
     }}
   }}
 
+  function getTpsCustomOption() {{
+    if (!l2TpsInput) return null;
+    return l2TpsInput.querySelector('option[value="custom"]');
+  }}
+
+  function setCustomTpsLabel(tps) {{
+    const customOpt = getTpsCustomOption();
+    if (!customOpt) return;
+    const safeTps = Number.isFinite(tps) ? Math.max(0, tps) : 0;
+    customOpt.textContent = `custom (${{formatNum(safeTps, 3)}} tps)`;
+    customOpt.dataset.tps = String(safeTps);
+  }}
+
+  function computeTpsFromGasAndBlockTime() {{
+    const gasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
+    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, {DEFAULT_L2_BLOCK_TIME_SECONDS});
+    if (l2BlockTimeSec <= 0 || ERC20_TRANSFER_GAS <= 0) return 0;
+    return gasPerL2Block / (ERC20_TRANSFER_GAS * l2BlockTimeSec);
+  }}
+
+  function selectedTpsValue() {{
+    if (!l2TpsInput) return null;
+    const raw = l2TpsInput.value;
+    if (raw === 'custom') {{
+      const customOpt = getTpsCustomOption();
+      if (!customOpt) return null;
+      const fromDataset = Number(customOpt.dataset.tps);
+      return Number.isFinite(fromDataset) && fromDataset >= 0 ? fromDataset : null;
+    }}
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }}
+
+  function syncTpsFromL2Gas() {{
+    if (!l2TpsInput) return;
+    const tps = computeTpsFromGasAndBlockTime();
+    setCustomTpsLabel(tps);
+    let presetMatch = null;
+    for (const preset of TPS_PRESETS) {{
+      const tolerance = Math.max(1e-6, Math.abs(preset) * 1e-3);
+      if (Math.abs(tps - preset) <= tolerance) {{
+        presetMatch = preset;
+        break;
+      }}
+    }}
+    if (presetMatch !== null) {{
+      l2TpsInput.value = String(presetMatch);
+    }} else {{
+      l2TpsInput.value = 'custom';
+    }}
+  }}
+
+  function syncL2GasFromTps() {{
+    if (!l2TpsInput) return false;
+    const tps = selectedTpsValue();
+    if (tps == null) {{
+      syncTpsFromL2Gas();
+      return false;
+    }}
+    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, {DEFAULT_L2_BLOCK_TIME_SECONDS});
+    const gasPerL2Block = Math.max(0, tps * l2BlockTimeSec * ERC20_TRANSFER_GAS);
+    l2GasPerL2BlockInput.value = String(Math.round(gasPerL2Block));
+    setCustomTpsLabel(tps);
+    return true;
+  }}
+
   function clampNum(x, lo, hi) {{
     return Math.max(lo, Math.min(hi, x));
   }}
@@ -1315,6 +1385,7 @@ def build_app_js():
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
     const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
     const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
+    syncTpsFromL2Gas();
     const l2GasScenario = l2GasScenarioInput.value || 'constant';
     const l2DemandRegime = l2DemandRegimeInput.value || 'base';
     const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
@@ -2751,6 +2822,36 @@ def build_app_js():
     markParamsStale('Auto alpha changed. Click Recompute derived charts.');
   }});
 
+  if (l2TpsInput) {{
+    l2TpsInput.addEventListener('change', function () {{
+      if (syncL2GasFromTps()) {{
+        markParamsStale('Parameter changes pending. Click Recompute derived charts.');
+      }}
+    }});
+  }}
+
+  l2GasPerL2BlockInput.addEventListener('input', function () {{
+    syncTpsFromL2Gas();
+  }});
+  l2GasPerL2BlockInput.addEventListener('change', function () {{
+    syncTpsFromL2Gas();
+  }});
+
+  l2BlockTimeSecInput.addEventListener('input', function () {{
+    if (l2TpsInput && l2TpsInput.value !== 'custom') {{
+      syncL2GasFromTps();
+    }} else {{
+      syncTpsFromL2Gas();
+    }}
+  }});
+  l2BlockTimeSecInput.addEventListener('change', function () {{
+    if (l2TpsInput && l2TpsInput.value !== 'custom') {{
+      syncL2GasFromTps();
+    }} else {{
+      syncTpsFromL2Gas();
+    }}
+  }});
+
   minInput.addEventListener('keydown', function (e) {{
     if (e.key === 'Enter') {{
       runBusyUiTask('Applying range...', function () {{
@@ -2998,6 +3099,21 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
       color: #0b5f58;
       background: #ecfeff;
     }}
+    .inline-help {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border: 1px solid #94a3b8;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1;
+      color: #475569;
+      background: #ffffff;
+      cursor: help;
+      user-select: none;
+    }}
     label {{ font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }}
     input[type=number], select {{ width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }}
     button {{ border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }}
@@ -3194,6 +3310,21 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
           <div class=\"controls\">
             <label>Post every N L1 blocks <input id=\"postEveryBlocks\" type=\"number\" min=\"1\" step=\"1\" value=\"{DEFAULT_POST_EVERY_BLOCKS}\" /></label>
             <label>L2 gas / L2 block <input id=\"l2GasPerL2Block\" type=\"number\" min=\"0\" step=\"100000\" value=\"{DEFAULT_L2_GAS_PER_L2_BLOCK}\" /></label>
+            <label>L2 TPS
+              <select id=\"l2Tps\">
+                <option value=\"0.5\">0.5</option>
+                <option value=\"1\">1</option>
+                <option value=\"2\">2</option>
+                <option value=\"5\">5</option>
+                <option value=\"10\">10</option>
+                <option value=\"20\">20</option>
+                <option value=\"50\">50</option>
+                <option value=\"100\">100</option>
+                <option value=\"200\">200</option>
+                <option value=\"custom\" selected>custom</option>
+              </select>
+              <span class=\"inline-help\" title=\"tx means one ERC20 transfer, assumed to consume 70,000 L2 gas. TPS conversion: L2 gas/L2 block = TPS * L2 block time * 70,000.\">?</span>
+            </label>
             <label>L2 block time (s) <input id=\"l2BlockTimeSec\" type=\"number\" min=\"0.1\" step=\"0.1\" value=\"{DEFAULT_L2_BLOCK_TIME_SECONDS}\" /></label>
             <label>L2 gas scenario
               <select id=\"l2GasScenario\">

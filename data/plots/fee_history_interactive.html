@@ -95,6 +95,21 @@
       color: #0b5f58;
       background: #ecfeff;
     }
+    .inline-help {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border: 1px solid #94a3b8;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1;
+      color: #475569;
+      background: #ffffff;
+      cursor: help;
+      user-select: none;
+    }
     label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
     input[type=number], select { width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
     button { border: 1px solid var(--line); background: #fff; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
@@ -301,6 +316,21 @@
           <div class="controls">
             <label>Post every N L1 blocks <input id="postEveryBlocks" type="number" min="1" step="1" value="10" /></label>
             <label>L2 gas / L2 block <input id="l2GasPerL2Block" type="number" min="0" step="100000" value="1000000" /></label>
+            <label>L2 TPS
+              <select id="l2Tps">
+                <option value="0.5">0.5</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="custom" selected>custom</option>
+              </select>
+              <span class="inline-help" title="tx means one ERC20 transfer, assumed to consume 70,000 L2 gas. TPS conversion: L2 gas/L2 block = TPS * L2 block time * 70,000.">?</span>
+            </label>
             <label>L2 block time (s) <input id="l2BlockTimeSec" type="number" min="0.1" step="0.1" value="2" /></label>
             <label>L2 gas scenario
               <select id="l2GasScenario">

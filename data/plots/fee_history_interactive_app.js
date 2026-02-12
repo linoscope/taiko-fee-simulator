@@ -1,8 +1,10 @@
 (function () {
   const BLOB_GAS_PER_BLOB = 131072;
+  const ERC20_TRANSFER_GAS = 70000;
   const L1_BLOCK_TIME_SECONDS = 12;
   const DEFAULT_ALPHA_GAS = 0.001666666667;
   const DEFAULT_ALPHA_BLOB = 0.004369066667;
+  const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({ low: 0.7, base: 1.0, high: 1.4 });
   const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
   const SWEEP_ALPHA_VARIANTS = Object.freeze(['current', 'zero']);
@@ -47,6 +49,7 @@
 
   const postEveryBlocksInput = document.getElementById('postEveryBlocks');
   const l2GasPerL2BlockInput = document.getElementById('l2GasPerL2Block');
+  const l2TpsInput = document.getElementById('l2Tps');
   const l2BlockTimeSecInput = document.getElementById('l2BlockTimeSec');
   const l2GasScenarioInput = document.getElementById('l2GasScenario');
   const l2DemandRegimeInput = document.getElementById('l2DemandRegime');
@@ -867,6 +870,72 @@
     }
   }
 
+  function getTpsCustomOption() {
+    if (!l2TpsInput) return null;
+    return l2TpsInput.querySelector('option[value="custom"]');
+  }
+
+  function setCustomTpsLabel(tps) {
+    const customOpt = getTpsCustomOption();
+    if (!customOpt) return;
+    const safeTps = Number.isFinite(tps) ? Math.max(0, tps) : 0;
+    customOpt.textContent = `custom (${formatNum(safeTps, 3)} tps)`;
+    customOpt.dataset.tps = String(safeTps);
+  }
+
+  function computeTpsFromGasAndBlockTime() {
+    const gasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
+    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 2);
+    if (l2BlockTimeSec <= 0 || ERC20_TRANSFER_GAS <= 0) return 0;
+    return gasPerL2Block / (ERC20_TRANSFER_GAS * l2BlockTimeSec);
+  }
+
+  function selectedTpsValue() {
+    if (!l2TpsInput) return null;
+    const raw = l2TpsInput.value;
+    if (raw === 'custom') {
+      const customOpt = getTpsCustomOption();
+      if (!customOpt) return null;
+      const fromDataset = Number(customOpt.dataset.tps);
+      return Number.isFinite(fromDataset) && fromDataset >= 0 ? fromDataset : null;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  function syncTpsFromL2Gas() {
+    if (!l2TpsInput) return;
+    const tps = computeTpsFromGasAndBlockTime();
+    setCustomTpsLabel(tps);
+    let presetMatch = null;
+    for (const preset of TPS_PRESETS) {
+      const tolerance = Math.max(1e-6, Math.abs(preset) * 1e-3);
+      if (Math.abs(tps - preset) <= tolerance) {
+        presetMatch = preset;
+        break;
+      }
+    }
+    if (presetMatch !== null) {
+      l2TpsInput.value = String(presetMatch);
+    } else {
+      l2TpsInput.value = 'custom';
+    }
+  }
+
+  function syncL2GasFromTps() {
+    if (!l2TpsInput) return false;
+    const tps = selectedTpsValue();
+    if (tps == null) {
+      syncTpsFromL2Gas();
+      return false;
+    }
+    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 2);
+    const gasPerL2Block = Math.max(0, tps * l2BlockTimeSec * ERC20_TRANSFER_GAS);
+    l2GasPerL2BlockInput.value = String(Math.round(gasPerL2Block));
+    setCustomTpsLabel(tps);
+    return true;
+  }
+
   function clampNum(x, lo, hi) {
     return Math.max(lo, Math.min(hi, x));
   }
@@ -1062,6 +1131,7 @@
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
     const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
     const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
+    syncTpsFromL2Gas();
     const l2GasScenario = l2GasScenarioInput.value || 'constant';
     const l2DemandRegime = l2DemandRegimeInput.value || 'base';
     const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
@@ -2496,6 +2566,36 @@
   autoAlphaInput.addEventListener('change', function () {
     syncAutoAlphaInputs();
     markParamsStale('Auto alpha changed. Click Recompute derived charts.');
+  });
+
+  if (l2TpsInput) {
+    l2TpsInput.addEventListener('change', function () {
+      if (syncL2GasFromTps()) {
+        markParamsStale('Parameter changes pending. Click Recompute derived charts.');
+      }
+    });
+  }
+
+  l2GasPerL2BlockInput.addEventListener('input', function () {
+    syncTpsFromL2Gas();
+  });
+  l2GasPerL2BlockInput.addEventListener('change', function () {
+    syncTpsFromL2Gas();
+  });
+
+  l2BlockTimeSecInput.addEventListener('input', function () {
+    if (l2TpsInput && l2TpsInput.value !== 'custom') {
+      syncL2GasFromTps();
+    } else {
+      syncTpsFromL2Gas();
+    }
+  });
+  l2BlockTimeSecInput.addEventListener('change', function () {
+    if (l2TpsInput && l2TpsInput.value !== 'custom') {
+      syncL2GasFromTps();
+    } else {
+      syncTpsFromL2Gas();
+    }
   });
 
   minInput.addEventListener('keydown', function (e) {
