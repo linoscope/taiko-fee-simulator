@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-02-11T18:18:44.345348+00:00",
+  "generated_at_utc": "2026-02-12T16:57:24.573793+00:00",
   "html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_current365.html",
   "data_js": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_data_current365.js",
   "l1_csv": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260206T195430Z.csv",
@@ -8,6 +8,7 @@
   "l2_base_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/base_fee_25933902_41808552_step60_20260211T135212Z.csv",
   "l2_scroll_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/scroll_fee_13188273_29645724_step62_20260211T135027Z.csv",
   "l2_optimism_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/optimism_fee_131529187_147403837_step60_20260211T150257Z.csv",
+  "l2_taiko_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/taiko_fee_824365_4321666_step66_20260212T163439Z.csv",
   "l2_world_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/world_fee_9660756_25535406_step60_20260211T165959Z.csv",
   "window_start_utc": "2025-02-04T08:19:11+00:00",
   "window_end_utc": "2026-02-06T19:34:11+00:00",
@@ -16,12 +17,14 @@
   "l2_base_points": 264579,
   "l2_scroll_points": 265444,
   "l2_optimism_points": 264579,
+  "l2_taiko_points": 52991,
   "l2_world_points": 264579,
   "l1_stride": 11,
   "l2_arb_stride": 1,
   "l2_base_stride": 1,
   "l2_scroll_stride": 1,
   "l2_optimism_stride": 1,
+  "l2_taiko_stride": 1,
   "l2_world_stride": 1,
   "l1_time_mapping_method": "sampled_anchor_timestamps_from_rpc_interpolation",
   "l1_seconds_per_block_estimate": 12.08115876048099,
@@ -56,6 +59,12 @@
     "p50": 2.0,
     "p90": 2.0,
     "max": 2.0
+  },
+  "l2_taiko_segment_seconds_per_block_stats": {
+    "min": 0.0,
+    "p50": 6.090909090909091,
+    "p90": 21.818181818181817,
+    "max": 159.8181818181818
   },
   "l2_world_segment_seconds_per_block_stats": {
     "min": 2.0,

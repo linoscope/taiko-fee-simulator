@@ -548,6 +548,7 @@ def build_html(title: str, data_js_filename: str):
         <span id="metaL2Arb"></span>
         <span id="metaL2Base"></span>
         <span id="metaL2Op"></span>
+        <span id="metaL2Taiko"></span>
         <span id="metaL2World"></span>
         <span id="metaL2Scroll"></span>
       </div>
@@ -557,6 +558,7 @@ def build_html(title: str, data_js_filename: str):
       <div id="l2ArbBasePlot" class="plot"></div>
       <div id="l2BaseBasePlot" class="plot"></div>
       <div id="l2OpBasePlot" class="plot"></div>
+      <div id="l2TaikoBasePlot" class="plot"></div>
       <div id="l2WorldBasePlot" class="plot"></div>
       <div id="l2ScrollBasePlot" class="plot"></div>
     </div>
@@ -572,6 +574,7 @@ def build_html(title: str, data_js_filename: str):
   const metaL2ArbEl = document.getElementById('metaL2Arb');
   const metaL2BaseEl = document.getElementById('metaL2Base');
   const metaL2OpEl = document.getElementById('metaL2Op');
+  const metaL2TaikoEl = document.getElementById('metaL2Taiko');
   const metaL2WorldEl = document.getElementById('metaL2World');
   const metaL2ScrollEl = document.getElementById('metaL2Scroll');
   const startInput = document.getElementById('startTime');
@@ -594,6 +597,7 @@ def build_html(title: str, data_js_filename: str):
   const l2Arb = payload.l2Arb;
   const l2BaseChain = payload.l2Base;
   const l2OpChain = payload.l2Optimism;
+  const l2TaikoChain = payload.l2Taiko;
   const l2WorldChain = payload.l2World;
   const l2ScrollChain = payload.l2Scroll;
   const meta = payload.meta || {};
@@ -607,12 +611,14 @@ def build_html(title: str, data_js_filename: str):
   const l2BaseFee = l2BaseChain.baseFeeGwei;
   const l2OpX = l2OpChain.xSec;
   const l2OpFee = l2OpChain.baseFeeGwei;
+  const l2TaikoX = l2TaikoChain.xSec;
+  const l2TaikoFee = l2TaikoChain.baseFeeGwei;
   const l2WorldX = l2WorldChain.xSec;
   const l2WorldFee = l2WorldChain.baseFeeGwei;
   const l2ScrollX = l2ScrollChain.xSec;
   const l2ScrollFee = l2ScrollChain.baseFeeGwei;
 
-  if (!l1X.length || !l2ArbX.length || !l2BaseX.length || !l2OpX.length || !l2WorldX.length || !l2ScrollX.length) {
+  if (!l1X.length || !l2ArbX.length || !l2BaseX.length || !l2OpX.length || !l2TaikoX.length || !l2WorldX.length || !l2ScrollX.length) {
     setStatus('Dataset is empty.');
     return;
   }
@@ -621,6 +627,8 @@ def build_html(title: str, data_js_filename: str):
   // L2 chains can start later and will naturally render blank until their first point.
   const MIN_X = l1X[0];
   const MAX_X = l1X[l1X.length - 1];
+  const TAIKO_START_X = l2TaikoX[0];
+  const SHOW_TAIKO_START_MARKER = Number.isFinite(TAIKO_START_X) && TAIKO_START_X > MIN_X && TAIKO_START_X < MAX_X;
   const WORLD_START_X = l2WorldX[0];
   const SHOW_WORLD_START_MARKER = Number.isFinite(WORLD_START_X) && WORLD_START_X > MIN_X && WORLD_START_X < MAX_X;
 
@@ -633,6 +641,7 @@ def build_html(title: str, data_js_filename: str):
   metaL2ArbEl.textContent = `L2 Arbitrum: ${l2ArbX.length.toLocaleString()} points (stride ${meta.l2Arbitrum.stride} sampled rows)`;
   metaL2BaseEl.textContent = `L2 Base: ${l2BaseX.length.toLocaleString()} points (stride ${meta.l2Base.stride} sampled rows)`;
   metaL2OpEl.textContent = `L2 Optimism: ${l2OpX.length.toLocaleString()} points (stride ${meta.l2Optimism.stride} sampled rows)`;
+  metaL2TaikoEl.textContent = `L2 Taiko: ${l2TaikoX.length.toLocaleString()} points (stride ${meta.l2Taiko.stride} sampled rows)`;
   metaL2WorldEl.textContent = `L2 World: ${l2WorldX.length.toLocaleString()} points (stride ${meta.l2World.stride} sampled rows)`;
   metaL2ScrollEl.textContent = `L2 Scroll: ${l2ScrollX.length.toLocaleString()} points (stride ${meta.l2Scroll.stride} sampled rows)`;
 
@@ -641,6 +650,7 @@ def build_html(title: str, data_js_filename: str):
   const l2ArbBaseWrap = document.getElementById('l2ArbBasePlot');
   const l2BaseBaseWrap = document.getElementById('l2BaseBasePlot');
   const l2OpBaseWrap = document.getElementById('l2OpBasePlot');
+  const l2TaikoBaseWrap = document.getElementById('l2TaikoBasePlot');
   const l2WorldBaseWrap = document.getElementById('l2WorldBasePlot');
   const l2ScrollBaseWrap = document.getElementById('l2ScrollBasePlot');
 
@@ -726,6 +736,57 @@ def build_html(title: str, data_js_filename: str):
     rangeTextEl.textContent = `UTC ${secToUtcIso(lo)} -> ${secToUtcIso(hi)} (${days.toFixed(2)} days)`;
   }
 
+  function drawTaikoStartMarker(u, showLabel) {
+    if (!SHOW_TAIKO_START_MARKER) return;
+    if (!u || !u.scales || !u.scales.x) return;
+    const xScale = u.scales.x;
+    if (!Number.isFinite(xScale.min) || !Number.isFinite(xScale.max)) return;
+    if (TAIKO_START_X < xScale.min || TAIKO_START_X > xScale.max) return;
+
+    const xPos = Math.round(u.valToPos(TAIKO_START_X, 'x', true)) + 0.5;
+    const top = u.bbox.top;
+    const bottom = top + u.bbox.height;
+    const ctx = u.ctx;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(180, 83, 9, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(xPos, top);
+    ctx.lineTo(xPos, bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (showLabel) {
+      const label = 'Taiko data starts';
+      ctx.font = '12px ui-sans-serif, system-ui, -apple-system, Segoe UI';
+      ctx.textBaseline = 'top';
+      const padX = 6;
+      const padY = 3;
+      const textW = Math.ceil(ctx.measureText(label).width);
+      const boxW = textW + padX * 2;
+      const boxH = 18;
+      const minLeft = u.bbox.left + 2;
+      const maxLeft = u.bbox.left + u.bbox.width - boxW - 2;
+      let left = xPos + 8;
+      if (left > maxLeft) left = Math.max(minLeft, xPos - boxW - 8);
+      const topY = u.bbox.top + 6;
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.strokeStyle = 'rgba(180, 83, 9, 0.95)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.rect(left, topY, boxW, boxH);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(51, 65, 85, 1)';
+      ctx.fillText(label, left + padX, topY + padY);
+    }
+
+    ctx.restore();
+  }
+
   function drawWorldStartMarker(u, showLabel) {
     if (!SHOW_WORLD_START_MARKER) return;
     if (!u || !u.scales || !u.scales.x) return;
@@ -777,10 +838,13 @@ def build_html(title: str, data_js_filename: str):
     ctx.restore();
   }
 
-  function makeOpts(title, seriesLabel, strokeColor, width, height, valueMaxDecimals, showWorldStartLabel) {
+  function makeOpts(title, seriesLabel, strokeColor, width, height, valueMaxDecimals, showWorldStartLabel, showTaikoStartLabel) {
     const maxDecimals = Number.isFinite(valueMaxDecimals) ? valueMaxDecimals : 4;
     const hooks = { setScale: [onSetScale] };
-    hooks.draw = [(u) => drawWorldStartMarker(u, !!showWorldStartLabel)];
+    hooks.draw = [
+      (u) => drawTaikoStartMarker(u, !!showTaikoStartLabel),
+      (u) => drawWorldStartMarker(u, !!showWorldStartLabel),
+    ];
     return {
       title: title,
       width: width,
@@ -814,12 +878,13 @@ def build_html(title: str, data_js_filename: str):
   let l2ArbBasePlot = null;
   let l2BaseBasePlot = null;
   let l2OpBasePlot = null;
+  let l2TaikoBasePlot = null;
   let l2WorldBasePlot = null;
   let l2ScrollBasePlot = null;
   
 
   function allPlots() {
-    return [l1BasePlot, l1BlobPlot, l2ArbBasePlot, l2BaseBasePlot, l2OpBasePlot, l2WorldBasePlot, l2ScrollBasePlot].filter(Boolean);
+    return [l1BasePlot, l1BlobPlot, l2ArbBasePlot, l2BaseBasePlot, l2OpBasePlot, l2TaikoBasePlot, l2WorldBasePlot, l2ScrollBasePlot].filter(Boolean);
   }
 
   function setAllXRange(minSec, maxSec, sourcePlot) {
@@ -850,55 +915,63 @@ def build_html(title: str, data_js_filename: str):
     const w3 = plotWidthFor(l2ArbBaseWrap);
     const w4 = plotWidthFor(l2BaseBaseWrap);
     const w5 = plotWidthFor(l2OpBaseWrap);
-    const w6 = plotWidthFor(l2WorldBaseWrap);
-    const w7 = plotWidthFor(l2ScrollBaseWrap);
+    const w6 = plotWidthFor(l2TaikoBaseWrap);
+    const w7 = plotWidthFor(l2WorldBaseWrap);
+    const w8 = plotWidthFor(l2ScrollBaseWrap);
     if (l1BasePlot) l1BasePlot.setSize({ width: w1, height: 300 });
     if (l1BlobPlot) l1BlobPlot.setSize({ width: w2, height: 300 });
     if (l2ArbBasePlot) l2ArbBasePlot.setSize({ width: w3, height: 300 });
     if (l2BaseBasePlot) l2BaseBasePlot.setSize({ width: w4, height: 300 });
     if (l2OpBasePlot) l2OpBasePlot.setSize({ width: w5, height: 300 });
-    if (l2WorldBasePlot) l2WorldBasePlot.setSize({ width: w6, height: 300 });
-    if (l2ScrollBasePlot) l2ScrollBasePlot.setSize({ width: w7, height: 300 });
+    if (l2TaikoBasePlot) l2TaikoBasePlot.setSize({ width: w6, height: 300 });
+    if (l2WorldBasePlot) l2WorldBasePlot.setSize({ width: w7, height: 300 });
+    if (l2ScrollBasePlot) l2ScrollBasePlot.setSize({ width: w8, height: 300 });
   }
 
   l1BasePlot = new uPlot(
-    makeOpts('L1 Base Fee History', 'L1 base fee (gwei)', '#2563eb', plotWidthFor(l1BaseWrap), 300, 4, false),
+    makeOpts('L1 Base Fee History', 'L1 base fee (gwei)', '#2563eb', plotWidthFor(l1BaseWrap), 300, 4, false, false),
     [l1X, l1Base],
     l1BaseWrap
   );
 
   l1BlobPlot = new uPlot(
-    makeOpts('L1 Blob Fee History', 'L1 blob fee (gwei)', '#f97316', plotWidthFor(l1BlobWrap), 300, 4, false),
+    makeOpts('L1 Blob Fee History', 'L1 blob fee (gwei)', '#f97316', plotWidthFor(l1BlobWrap), 300, 4, false, false),
     [l1X, l1Blob],
     l1BlobWrap
   );
 
   l2ArbBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (Arbitrum)', 'L2 base fee (gwei)', '#0f766e', plotWidthFor(l2ArbBaseWrap), 300, 5, false),
+    makeOpts('L2 Base Fee History (Arbitrum)', 'L2 base fee (gwei)', '#0f766e', plotWidthFor(l2ArbBaseWrap), 300, 5, false, false),
     [l2ArbX, l2ArbBase],
     l2ArbBaseWrap
   );
 
   l2BaseBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (Base)', 'L2 base fee (gwei)', '#dc2626', plotWidthFor(l2BaseBaseWrap), 300, 5, false),
+    makeOpts('L2 Base Fee History (Base)', 'L2 base fee (gwei)', '#dc2626', plotWidthFor(l2BaseBaseWrap), 300, 5, false, false),
     [l2BaseX, l2BaseFee],
     l2BaseBaseWrap
   );
 
   l2OpBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (Optimism)', 'L2 base fee (gwei)', '#0891b2', plotWidthFor(l2OpBaseWrap), 300, 5, false),
+    makeOpts('L2 Base Fee History (Optimism)', 'L2 base fee (gwei)', '#0891b2', plotWidthFor(l2OpBaseWrap), 300, 5, false, false),
     [l2OpX, l2OpFee],
     l2OpBaseWrap
   );
 
+  l2TaikoBasePlot = new uPlot(
+    makeOpts('L2 Base Fee History (Taiko)', 'L2 base fee (gwei)', '#b45309', plotWidthFor(l2TaikoBaseWrap), 300, 5, false, true),
+    [l2TaikoX, l2TaikoFee],
+    l2TaikoBaseWrap
+  );
+
   l2WorldBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (World)', 'L2 base fee (gwei)', '#475569', plotWidthFor(l2WorldBaseWrap), 300, 5, true),
+    makeOpts('L2 Base Fee History (World)', 'L2 base fee (gwei)', '#475569', plotWidthFor(l2WorldBaseWrap), 300, 5, true, false),
     [l2WorldX, l2WorldFee],
     l2WorldBaseWrap
   );
 
   l2ScrollBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (Scroll)', 'L2 base fee (gwei)', '#16a34a', plotWidthFor(l2ScrollBaseWrap), 300, 9, false),
+    makeOpts('L2 Base Fee History (Scroll)', 'L2 base fee (gwei)', '#16a34a', plotWidthFor(l2ScrollBaseWrap), 300, 9, false, false),
     [l2ScrollX, l2ScrollFee],
     l2ScrollBaseWrap
   );
@@ -957,7 +1030,7 @@ def build_html(title: str, data_js_filename: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate a synced uPlot HTML for L1 base/blob + L2 (Arbitrum/Base/Optimism/World/Scroll) base fee histories on timestamp axis."
+        description="Generate a synced uPlot HTML for L1 base/blob + L2 (Arbitrum/Base/Optimism/Taiko/World/Scroll) base fee histories on timestamp axis."
     )
     project_root = Path(__file__).resolve().parents[1]
     l1_data_dir = project_root / "data" / "l1"
@@ -970,6 +1043,7 @@ def main():
     parser.add_argument("--l2-base-csv", default=None, help="Path to sampled Base fee CSV")
     parser.add_argument("--l2-scroll-csv", default=None, help="Path to sampled Scroll fee CSV")
     parser.add_argument("--l2-optimism-csv", default=None, help="Path to sampled Optimism fee CSV")
+    parser.add_argument("--l2-taiko-csv", default=None, help="Path to sampled Taiko fee CSV")
     parser.add_argument("--l2-world-csv", default=None, help="Path to sampled World fee CSV")
     parser.add_argument(
         "--l1-rpc",
@@ -1067,6 +1141,13 @@ def main():
     if l2_optimism_csv_path is None:
         raise FileNotFoundError("Could not resolve Optimism L2 CSV. Pass --l2-optimism-csv.")
 
+    if args.l2_taiko_csv:
+        l2_taiko_csv_path = Path(args.l2_taiko_csv).resolve()
+    else:
+        l2_taiko_csv_path = find_latest_nontrivial_csv(l2_data_dir, "taiko_fee_*_step*_*.csv")
+    if l2_taiko_csv_path is None:
+        raise FileNotFoundError("Could not resolve Taiko L2 CSV. Pass --l2-taiko-csv.")
+
     if args.l2_world_csv:
         l2_world_csv_path = Path(args.l2_world_csv).resolve()
     else:
@@ -1092,6 +1173,7 @@ def main():
     l2_arb = read_l2_sampled_series(l2_arb_csv_path, args.l2_max_points)
     l2_base = read_l2_sampled_series(l2_base_csv_path, args.l2_max_points)
     l2_optimism = read_l2_sampled_series(l2_optimism_csv_path, args.l2_max_points)
+    l2_taiko = read_l2_sampled_series(l2_taiko_csv_path, args.l2_max_points)
     l2_world = read_l2_sampled_series(l2_world_csv_path, args.l2_max_points)
     l2_scroll = read_l2_sampled_series(l2_scroll_csv_path, args.l2_max_points)
 
@@ -1160,6 +1242,14 @@ def main():
                 "time_mapping_method": "sampled anchor timestamps from RPC; interpolation between anchors for unsampled blocks",
                 "segment_seconds_per_block_stats": l2_optimism["segment_seconds_per_block_stats"],
             },
+            "l2Taiko": {
+                "source_csv": str(l2_taiko_csv_path),
+                "row_count_total": l2_taiko["row_count_total"],
+                "row_count_sampled": l2_taiko["row_count_sampled"],
+                "stride": l2_taiko["stride"],
+                "time_mapping_method": "sampled anchor timestamps from RPC; interpolation between anchors for unsampled blocks",
+                "segment_seconds_per_block_stats": l2_taiko["segment_seconds_per_block_stats"],
+            },
             "l2World": {
                 "source_csv": str(l2_world_csv_path),
                 "row_count_total": l2_world["row_count_total"],
@@ -1189,6 +1279,10 @@ def main():
         "l2Optimism": {
             "xSec": l2_optimism["x_sec"],
             "baseFeeGwei": l2_optimism["base_fee_gwei"],
+        },
+        "l2Taiko": {
+            "xSec": l2_taiko["x_sec"],
+            "baseFeeGwei": l2_taiko["base_fee_gwei"],
         },
         "l2World": {
             "xSec": l2_world["x_sec"],
@@ -1221,6 +1315,7 @@ def main():
         "l2_base_csv": str(l2_base_csv_path),
         "l2_scroll_csv": str(l2_scroll_csv_path),
         "l2_optimism_csv": str(l2_optimism_csv_path),
+        "l2_taiko_csv": str(l2_taiko_csv_path),
         "l2_world_csv": str(l2_world_csv_path),
         "window_start_utc": unix_to_iso(window_min),
         "window_end_utc": unix_to_iso(window_max),
@@ -1229,12 +1324,14 @@ def main():
         "l2_base_points": len(l2_base["x_sec"]),
         "l2_scroll_points": len(l2_scroll["x_sec"]),
         "l2_optimism_points": len(l2_optimism["x_sec"]),
+        "l2_taiko_points": len(l2_taiko["x_sec"]),
         "l2_world_points": len(l2_world["x_sec"]),
         "l1_stride": l1["stride"],
         "l2_arb_stride": l2_arb["stride"],
         "l2_base_stride": l2_base["stride"],
         "l2_scroll_stride": l2_scroll["stride"],
         "l2_optimism_stride": l2_optimism["stride"],
+        "l2_taiko_stride": l2_taiko["stride"],
         "l2_world_stride": l2_world["stride"],
         "l1_time_mapping_method": l1["time_map"]["method"],
         "l1_seconds_per_block_estimate": l1["time_map"].get("seconds_per_block")
@@ -1246,6 +1343,7 @@ def main():
         "l2_base_segment_seconds_per_block_stats": l2_base["segment_seconds_per_block_stats"],
         "l2_scroll_segment_seconds_per_block_stats": l2_scroll["segment_seconds_per_block_stats"],
         "l2_optimism_segment_seconds_per_block_stats": l2_optimism["segment_seconds_per_block_stats"],
+        "l2_taiko_segment_seconds_per_block_stats": l2_taiko["segment_seconds_per_block_stats"],
         "l2_world_segment_seconds_per_block_stats": l2_world["segment_seconds_per_block_stats"],
     }
     out_summary_path.write_text(json.dumps(summary, indent=2))

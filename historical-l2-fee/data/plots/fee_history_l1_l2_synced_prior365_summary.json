@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-02-11T18:25:09.396531+00:00",
+  "generated_at_utc": "2026-02-12T17:03:29.181745+00:00",
   "html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_prior365.html",
   "data_js": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_data_prior365.js",
   "l1_csv": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260207T042811Z.csv",
@@ -8,6 +8,7 @@
   "l2_base_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/base_fee_merged_20260211T131033Z.csv",
   "l2_scroll_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/scroll_fee_merged_20260211T131033Z.csv",
   "l2_optimism_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/optimism_fee_115658365_131529181_step60_20260211T151518Z.csv",
+  "l2_taiko_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/taiko_fee_1_824364_step22_20260212T164307Z.csv",
   "l2_world_csv": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/l2/world_fee_0_9660750_step60_20260211T170807Z.csv",
   "window_start_utc": "2024-02-02T23:11:47+00:00",
   "window_end_utc": "2025-02-04T08:18:59+00:00",
@@ -16,12 +17,14 @@
   "l2_base_points": 263488,
   "l2_scroll_points": 266868,
   "l2_optimism_points": 264515,
+  "l2_taiko_points": 37473,
   "l2_world_points": 161014,
   "l1_stride": 11,
   "l2_arb_stride": 1,
   "l2_base_stride": 1,
   "l2_scroll_stride": 1,
   "l2_optimism_stride": 1,
+  "l2_taiko_stride": 1,
   "l2_world_stride": 1,
   "l1_time_mapping_method": "sampled_anchor_timestamps_from_rpc_interpolation",
   "l1_seconds_per_block_estimate": 12.0783746534309,
@@ -56,6 +59,12 @@
     "p50": 2.0,
     "p90": 2.0,
     "max": 2.0
+  },
+  "l2_taiko_segment_seconds_per_block_stats": {
+    "min": 6.545454545454546,
+    "p50": 24.545454545454547,
+    "p90": 38.18181818181818,
+    "max": 8184.0
   },
   "l2_world_segment_seconds_per_block_stats": {
     "min": 2.0,
