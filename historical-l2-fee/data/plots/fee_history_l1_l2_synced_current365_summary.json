@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-02-12T16:57:24.573793+00:00",
+  "generated_at_utc": "2026-02-12T17:43:24.943210+00:00",
   "html": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_current365.html",
   "data_js": "/home/lin/workspace/taiko-fee-simulator/historical-l2-fee/data/plots/fee_history_l1_l2_synced_data_current365.js",
   "l1_csv": "/home/lin/workspace/taiko-fee-simulator/data/eth_l1_fee_365d_20260206T195430Z.csv",
@@ -26,16 +26,11 @@
   "l2_optimism_stride": 1,
   "l2_taiko_stride": 1,
   "l2_world_stride": 1,
-  "l1_time_mapping_method": "sampled_anchor_timestamps_from_rpc_interpolation",
-  "l1_seconds_per_block_estimate": 12.08115876048099,
-  "l1_anchor_count": 527,
-  "l1_anchor_stride_blocks": 5000,
-  "l1_segment_seconds_per_block_stats": {
-    "min": 12.024,
-    "p50": 12.072,
-    "p90": 12.12,
-    "max": 12.9888
-  },
+  "l1_time_mapping_method": "global_linear_from_summary_window",
+  "l1_seconds_per_block_estimate": 12.081164383561644,
+  "l1_anchor_count": null,
+  "l1_anchor_stride_blocks": null,
+  "l1_segment_seconds_per_block_stats": null,
   "l2_arb_segment_seconds_per_block_stats": {
     "min": 0.21294363256784968,
     "p50": 0.25052192066805845,

@@ -423,11 +423,17 @@ def read_l2_sampled_series(csv_path: Path, target_points: int):
     blocks = []
     x_sec = []
     base_fee_gwei = []
+    gas_used_ratio = []
 
     for row in sampled_rows:
         blocks.append(int(row["block_number"]))
         x_sec.append(parse_l2_row_timestamp(row))
         base_fee_gwei.append(round(int(row["base_fee_per_gas_wei"]) / 1e9, 9))
+        ratio_raw = row.get("gas_used_ratio")
+        if ratio_raw is None or ratio_raw == "":
+            gas_used_ratio.append(None)
+        else:
+            gas_used_ratio.append(float(ratio_raw))
 
     segment_spb = []
     for i in range(1, len(blocks)):
@@ -442,6 +448,7 @@ def read_l2_sampled_series(csv_path: Path, target_points: int):
         "blocks": blocks,
         "x_sec": x_sec,
         "base_fee_gwei": base_fee_gwei,
+        "gas_used_ratio": gas_used_ratio,
         "row_count_total": total_rows,
         "row_count_sampled": len(sampled_rows),
         "stride": stride,
@@ -516,6 +523,16 @@ def build_html(title: str, data_js_filename: str):
     .meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
     .range-text { margin-left: auto; font-size: 12px; color: var(--muted); }
     .status { margin: 4px 0 0; min-height: 18px; font-size: 12px; color: #b45309; }
+    .plot-controls {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+    }
+    .plot-controls label {
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+    }
     .plot {
       width: 100%;
       min-height: 300px;
@@ -555,7 +572,13 @@ def build_html(title: str, data_js_filename: str):
       <div class="status" id="status"></div>
       <div id="l1BasePlot" class="plot"></div>
       <div id="l1BlobPlot" class="plot"></div>
+      <div class="plot-controls">
+        <label><input id="arbFullnessToggle" type="checkbox" checked /> Show gas usage ratio (%)</label>
+      </div>
       <div id="l2ArbBasePlot" class="plot"></div>
+      <div class="plot-controls">
+        <label><input id="baseFullnessToggle" type="checkbox" checked /> Show gas usage ratio (%)</label>
+      </div>
       <div id="l2BaseBasePlot" class="plot"></div>
       <div id="l2OpBasePlot" class="plot"></div>
       <div id="l2TaikoBasePlot" class="plot"></div>
@@ -579,6 +602,8 @@ def build_html(title: str, data_js_filename: str):
   const metaL2ScrollEl = document.getElementById('metaL2Scroll');
   const startInput = document.getElementById('startTime');
   const endInput = document.getElementById('endTime');
+  const arbFullnessToggle = document.getElementById('arbFullnessToggle');
+  const baseFullnessToggle = document.getElementById('baseFullnessToggle');
 
   function setStatus(msg) {
     statusEl.textContent = msg || '';
@@ -607,8 +632,14 @@ def build_html(title: str, data_js_filename: str):
   const l1Blob = l1.blobFeeGwei;
   const l2ArbX = l2Arb.xSec;
   const l2ArbBase = l2Arb.baseFeeGwei;
+  const l2ArbGasPct = l2Arb.gasUsedPct || [];
+  const arbGasPctMax = l2ArbGasPct.reduce((max, v) => (Number.isFinite(v) ? Math.max(max, v) : max), 0);
+  const arbGasPctAxisMax = arbGasPctMax > 0 ? arbGasPctMax * 1.1 : 100;
   const l2BaseX = l2BaseChain.xSec;
   const l2BaseFee = l2BaseChain.baseFeeGwei;
+  const l2BaseGasPct = l2BaseChain.gasUsedPct || [];
+  const baseGasPctMax = l2BaseGasPct.reduce((max, v) => (Number.isFinite(v) ? Math.max(max, v) : max), 0);
+  const baseGasPctAxisMax = baseGasPctMax > 0 ? baseGasPctMax * 1.1 : 100;
   const l2OpX = l2OpChain.xSec;
   const l2OpFee = l2OpChain.baseFeeGwei;
   const l2TaikoX = l2TaikoChain.xSec;
@@ -712,6 +743,17 @@ def build_html(title: str, data_js_filename: str):
       minimumFractionDigits: 0,
       maximumFractionDigits: decimals,
     });
+  }
+
+  function formatPct(value, axisTick) {
+    if (!Number.isFinite(value)) return '--';
+    const abs = Math.abs(value);
+    if (abs === 0) return '0%';
+    if (abs < 1e-6) return `${value.toExponential(axisTick ? 1 : 2)}%`;
+    if (abs < 1e-4) return `${value.toFixed(axisTick ? 5 : 6)}%`;
+    if (abs < 1e-2) return `${value.toFixed(axisTick ? 4 : 5)}%`;
+    if (abs < 1) return `${value.toFixed(axisTick ? 3 : 4)}%`;
+    return `${value.toFixed(axisTick ? 1 : 2)}%`;
   }
 
   function clampRange(a, b) {
@@ -868,6 +910,49 @@ def build_html(title: str, data_js_filename: str):
     };
   }
 
+  function makeL2FeeWithGasOpts(title, feeColor, width, height, gasPctAxisUpper) {
+    const hooks = { setScale: [onSetScale] };
+    hooks.draw = [
+      (u) => drawTaikoStartMarker(u, false),
+      (u) => drawWorldStartMarker(u, false),
+    ];
+    return {
+      title: title,
+      width: width,
+      height: height,
+      scales: {
+        x: { time: false },
+        yFee: { auto: true },
+        yPct: { auto: false, range: [0, gasPctAxisUpper] },
+      },
+      series: [
+        {},
+        {
+          label: 'L2 base fee (gwei)',
+          scale: 'yFee',
+          stroke: feeColor,
+          width: 1.2,
+          value: (u, v) => formatGwei(v, 5),
+        },
+        {
+          label: 'Gas usage ratio (%)',
+          scale: 'yPct',
+          stroke: 'rgba(180, 83, 9, 0.65)',
+          width: 1.0,
+          dash: [6, 4],
+          value: (u, v) => formatPct(v, false),
+        },
+      ],
+      axes: [
+        { label: 'UTC time', values: (u, splits) => splits.map(formatAxisSec) },
+        { scale: 'yFee', label: 'gwei', values: (u, splits) => splits.map((v) => formatGwei(v, 5)) },
+        { scale: 'yPct', side: 1, label: '%', values: (u, splits) => splits.map((v) => formatPct(v, true)) },
+      ],
+      cursor: { drag: { x: true, y: false, setScale: true } },
+      hooks: hooks,
+    };
+  }
+
   function plotWidthFor(wrap) {
     return Math.max(540, wrap.clientWidth - 8);
   }
@@ -941,14 +1026,14 @@ def build_html(title: str, data_js_filename: str):
   );
 
   l2ArbBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (Arbitrum)', 'L2 base fee (gwei)', '#0f766e', plotWidthFor(l2ArbBaseWrap), 300, 5, false, false),
-    [l2ArbX, l2ArbBase],
+    makeL2FeeWithGasOpts('L2 Base Fee History (Arbitrum)', '#0f766e', plotWidthFor(l2ArbBaseWrap), 300, arbGasPctAxisMax),
+    [l2ArbX, l2ArbBase, l2ArbGasPct],
     l2ArbBaseWrap
   );
 
   l2BaseBasePlot = new uPlot(
-    makeOpts('L2 Base Fee History (Base)', 'L2 base fee (gwei)', '#dc2626', plotWidthFor(l2BaseBaseWrap), 300, 5, false, false),
-    [l2BaseX, l2BaseFee],
+    makeL2FeeWithGasOpts('L2 Base Fee History (Base)', '#dc2626', plotWidthFor(l2BaseBaseWrap), 300, baseGasPctAxisMax),
+    [l2BaseX, l2BaseFee, l2BaseGasPct],
     l2BaseBaseWrap
   );
 
@@ -975,6 +1060,8 @@ def build_html(title: str, data_js_filename: str):
     [l2ScrollX, l2ScrollFee],
     l2ScrollBaseWrap
   );
+  l2ArbBasePlot.setSeries(2, { show: !!arbFullnessToggle.checked });
+  l2BaseBasePlot.setSeries(2, { show: !!baseFullnessToggle.checked });
 
   updateRangeUi(MIN_X, MAX_X);
   setAllXRange(MIN_X, MAX_X, null);
@@ -995,6 +1082,15 @@ def build_html(title: str, data_js_filename: str):
 
   document.getElementById('last7dBtn').addEventListener('click', function () {
     setAllXRange(MAX_X - 7 * 86400, MAX_X, null);
+  });
+
+  arbFullnessToggle.addEventListener('change', function () {
+    if (!l2ArbBasePlot) return;
+    l2ArbBasePlot.setSeries(2, { show: !!arbFullnessToggle.checked });
+  });
+  baseFullnessToggle.addEventListener('change', function () {
+    if (!l2BaseBasePlot) return;
+    l2BaseBasePlot.setSeries(2, { show: !!baseFullnessToggle.checked });
   });
 
   startInput.addEventListener('keydown', function (e) {
@@ -1267,10 +1363,18 @@ def main():
         "l2Arb": {
             "xSec": l2_arb["x_sec"],
             "baseFeeGwei": l2_arb["base_fee_gwei"],
+            "gasUsedPct": [
+                (v * 100.0 if isinstance(v, (int, float)) else None)
+                for v in l2_arb["gas_used_ratio"]
+            ],
         },
         "l2Base": {
             "xSec": l2_base["x_sec"],
             "baseFeeGwei": l2_base["base_fee_gwei"],
+            "gasUsedPct": [
+                (v * 100.0 if isinstance(v, (int, float)) else None)
+                for v in l2_base["gas_used_ratio"]
+            ],
         },
         "l2Scroll": {
             "xSec": l2_scroll["x_sec"],
