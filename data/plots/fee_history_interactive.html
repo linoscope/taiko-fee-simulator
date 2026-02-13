@@ -126,6 +126,32 @@
     }
     .status { margin: 0; min-height: 18px; font-size: 12px; color: #b45309; }
     .metrics { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin: 6px 0; }
+    .advanced-metrics {
+      margin-top: 6px;
+      border-top: 1px dashed #cbd5e1;
+      padding-top: 6px;
+    }
+    .advanced-metrics > summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--muted);
+      list-style: none;
+      user-select: none;
+    }
+    .advanced-metrics > summary::-webkit-details-marker {
+      display: none;
+    }
+    .advanced-metrics > summary::before {
+      content: "▸ ";
+      color: #64748b;
+      font-weight: 700;
+    }
+    .advanced-metrics[open] > summary::before {
+      content: "▾ ";
+    }
+    .advanced-metrics[open] > summary {
+      margin-bottom: 4px;
+    }
     .plot { width: 100%; min-height: 336px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }
     .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; word-break: break-word; }
     .score-kpis {
@@ -310,9 +336,8 @@
           <span class="range-sub" id="hoverText"></span>
         </div>
 
-        <div class="assumptions" id="paramsCard">
-          <div class="assumptions-title">L2 posting assumptions</div>
-          <div class="dirty-hint" id="paramsDirtyHint"></div>
+        <div class="assumptions">
+          <div class="assumptions-title">L2 demand assumptions</div>
           <div class="controls">
             <label>Post every N L1 blocks <input id="postEveryBlocks" type="number" min="1" step="1" value="10" /></label>
             <label>L2 gas / L2 block <input id="l2GasPerL2Block" type="number" min="0" step="100000" value="1000000" /></label>
@@ -347,9 +372,25 @@
                 <option value="high">high</option>
               </select>
             </label>
+          </div>
+        </div>
+
+        <div class="assumptions">
+          <div class="assumptions-title">L1 posting cost assumptions</div>
+          <div class="controls">
             <label>L1 gas used <input id="l1GasUsed" type="number" min="0" step="1000" value="100000" /></label>
             <label>Blobs <input id="numBlobs" type="number" min="0" step="1" value="2" /></label>
             <label>Priority fee (gwei) <input id="priorityFeeGwei" type="number" min="0" step="0.01" value="1" /></label>
+          </div>
+        </div>
+
+        <div class="assumptions" id="paramsCard">
+          <div class="title-row">
+            <div class="assumptions-title">Fee controller parameters</div>
+            <button id="controllerHelpBtn" class="help-btn" type="button" title="Explain controller model">?</button>
+          </div>
+          <div class="dirty-hint" id="paramsDirtyHint"></div>
+          <div class="controls">
             <label>Controller mode
               <select id="controllerMode">
                 <option value="ff">ff</option>
@@ -379,34 +420,31 @@
             <label>Target vault (ETH) <input id="targetVaultEth" type="number" min="0" step="0.1" value="10" /></label>
             <button class="primary" id="recalcBtn">Recompute derived charts</button>
           </div>
-          <div class="formula">cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</div>
-          <div class="formula">FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</div>
-          <div class="formula">de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</div>
-          <div class="formula">D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</div>
-          <div class="formula">P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</div>
-          <div class="formula">auto alpha uses BASE throughput: alpha_gas = l1GasUsed / l2GasPerProposal_base, alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</div>
-          <div class="formula">Assume L1 block time = 12s; derived <strong id="derivedL2GasPerL1Block">-</strong> and <strong id="derivedL2GasPerProposal">-</strong></div>
-          <div class="formula">Demand multipliers: low=0.7x, base=1.0x, high=1.4x (applied to L2 throughput target)</div>
-          <div class="formula">L2 gas scenarios are mean-neutralized around the demand-adjusted throughput target</div>
-          <div class="formula">posting events at (i + 1) % postEveryBlocks == 0; revenue is settled to vault at post time</div>
+          <div class="formula">See <strong>?</strong> for equations and modeling assumptions.</div>
+          <div class="formula">Derived throughput: <strong id="derivedL2GasPerL1Block">-</strong> and <strong id="derivedL2GasPerProposal">-</strong></div>
           <div class="metrics">
             <span>Latest hypothetical posting cost: <strong id="latestPostingCost">-</strong></span>
             <span>Latest break-even L2 fee (cost-side reference): <strong id="latestRequiredFee">-</strong></span>
             <span>Latest charged L2 fee: <strong id="latestChargedFee">-</strong></span>
-            <span>Latest gas component fee: <strong id="latestGasComponentFee">-</strong></span>
-            <span>Latest blob component fee: <strong id="latestBlobComponentFee">-</strong></span>
-            <span>Latest deficit D: <strong id="latestDeficitEth">-</strong></span>
-            <span>Latest epsilon: <strong id="latestEpsilon">-</strong></span>
-            <span>Latest filtered derivative dE_f: <strong id="latestDerivative">-</strong></span>
-            <span>Latest integral I: <strong id="latestIntegral">-</strong></span>
-            <span>Latest FF term: <strong id="latestFfTerm">-</strong></span>
-            <span>Latest D term: <strong id="latestDTerm">-</strong></span>
-            <span>Latest FB term: <strong id="latestFbTerm">-</strong></span>
-            <span>Latest clamp state: <strong id="latestClampState">-</strong></span>
-            <span>Latest L2 gas used: <strong id="latestL2GasUsed">-</strong></span>
-            <span>Latest vault value: <strong id="latestVaultValue">-</strong></span>
             <span>Vault - target: <strong id="latestVaultGap">-</strong></span>
+            <span>Latest clamp state: <strong id="latestClampState">-</strong></span>
           </div>
+          <details class="advanced-metrics">
+            <summary>Advanced live metrics</summary>
+            <div class="metrics">
+              <span>Latest gas component fee: <strong id="latestGasComponentFee">-</strong></span>
+              <span>Latest blob component fee: <strong id="latestBlobComponentFee">-</strong></span>
+              <span>Latest deficit D: <strong id="latestDeficitEth">-</strong></span>
+              <span>Latest epsilon: <strong id="latestEpsilon">-</strong></span>
+              <span>Latest filtered derivative dE_f: <strong id="latestDerivative">-</strong></span>
+              <span>Latest integral I: <strong id="latestIntegral">-</strong></span>
+              <span>Latest FF term: <strong id="latestFfTerm">-</strong></span>
+              <span>Latest D term: <strong id="latestDTerm">-</strong></span>
+              <span>Latest FB term: <strong id="latestFbTerm">-</strong></span>
+              <span>Latest L2 gas used: <strong id="latestL2GasUsed">-</strong></span>
+              <span>Latest vault value: <strong id="latestVaultValue">-</strong></span>
+            </div>
+          </details>
         </div>
 
         <div class="assumptions score-card" id="scoreCard">
@@ -508,6 +546,28 @@
         <div id="vaultPlot" class="plot"></div>
         <div id="sweepPlot" class="plot"></div>
       </main>
+    </div>
+  </div>
+
+  <div id="controllerHelpModal" class="help-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="controllerHelpTitle">
+    <div class="help-card">
+      <div class="help-head">
+        <h2 id="controllerHelpTitle" class="help-title">Controller Model Notes</h2>
+        <button id="controllerHelpClose" class="help-close" type="button" title="Close">x</button>
+      </div>
+      <div class="help-body">
+        <p><strong>Posting cost:</strong> <code>cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</code></p>
+        <p><strong>Feedforward term:</strong> <code>FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</code></p>
+        <p><strong>Derivative filter:</strong> <code>de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</code></p>
+        <p><strong>Feedback state:</strong> <code>D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</code></p>
+        <p><strong>Fee law:</strong> <code>P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</code></p>
+        <ul>
+          <li><code>auto alpha</code> uses base throughput: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</code></li>
+          <li>Assumes L1 block time = 12s; demand multipliers are <code>low=0.7x</code>, <code>base=1.0x</code>, <code>high=1.4x</code></li>
+          <li>L2 gas scenarios are mean-neutralized around demand-adjusted throughput target</li>
+          <li>Posting happens when <code>(i + 1) % postEveryBlocks == 0</code>; revenue settles to vault at post time</li>
+        </ul>
+      </div>
     </div>
   </div>
 

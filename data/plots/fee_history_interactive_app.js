@@ -127,6 +127,9 @@
   const scoreBtn = document.getElementById('scoreBtn');
   const scoreStatus = document.getElementById('scoreStatus');
   const scoreCard = document.getElementById('scoreCard');
+  const controllerHelpBtn = document.getElementById('controllerHelpBtn');
+  const controllerHelpModal = document.getElementById('controllerHelpModal');
+  const controllerHelpClose = document.getElementById('controllerHelpClose');
   const scoreHelpBtn = document.getElementById('scoreHelpBtn');
   const scoreHelpModal = document.getElementById('scoreHelpModal');
   const scoreHelpClose = document.getElementById('scoreHelpClose');
@@ -2515,6 +2518,38 @@
       scoreHelpModal.classList.remove('open');
       scoreHelpModal.setAttribute('aria-hidden', 'true');
     }
+  }
+
+  function setControllerHelpOpen(isOpen) {
+    if (!controllerHelpModal) return;
+    if (isOpen) {
+      controllerHelpModal.classList.add('open');
+      controllerHelpModal.setAttribute('aria-hidden', 'false');
+    } else {
+      controllerHelpModal.classList.remove('open');
+      controllerHelpModal.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  if (controllerHelpBtn && controllerHelpModal) {
+    controllerHelpBtn.addEventListener('click', function () {
+      setControllerHelpOpen(true);
+    });
+    if (controllerHelpClose) {
+      controllerHelpClose.addEventListener('click', function () {
+        setControllerHelpOpen(false);
+      });
+    }
+    controllerHelpModal.addEventListener('click', function (e) {
+      if (e.target === controllerHelpModal) {
+        setControllerHelpOpen(false);
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && controllerHelpModal.classList.contains('open')) {
+        setControllerHelpOpen(false);
+      }
+    });
   }
 
   if (scoreHelpBtn && scoreHelpModal) {
