@@ -60,6 +60,26 @@
       box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.25);
     }
     .assumptions-title { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    .mechanism-group {
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }
+    .mechanism-group.hidden {
+      display: none;
+    }
+    .mechanism-group-title {
+      width: 100%;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+    }
     .dirty-hint {
       margin: 4px 0 8px;
       font-size: 12px;
@@ -391,29 +411,44 @@
           </div>
           <div class="dirty-hint" id="paramsDirtyHint"></div>
           <div class="controls">
-            <label>Controller mode
-              <select id="controllerMode">
-                <option value="ff">ff</option>
-                <option value="p">p</option>
-                <option value="pi">pi</option>
-                <option value="pd">pd</option>
-                <option value="pdi">pdi</option>
-                <option value="pi+ff">pi+ff</option>
-                <option value="pdi+ff" selected>pdi+ff</option>
+            <label>Fee mechanism
+              <select id="feeMechanism">
+                <option value="taiko" selected>Taiko (P/I/D + FF)</option>
+                <option value="arbitrum">Arbitrum (surplus pricer)</option>
               </select>
             </label>
-            <label><input id="autoAlpha" type="checkbox" checked /> Auto alpha</label>
-            <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0.001667" /></label>
-            <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.004369" /></label>
-            <label>Kp <input id="kp" type="number" min="0" step="0.001" value="1" /></label>
-            <label>P floor (gwei/L2 gas) <input id="pMinGwei" type="number" step="0.0001" value="0" /></label>
-            <label>Ki <input id="ki" type="number" min="0" step="0.001" value="0" /></label>
-            <label>Kd <input id="kd" type="number" min="0" step="0.001" value="0" /></label>
-            <label>I min <input id="iMin" type="number" step="0.1" value="0" /></label>
-            <label>I max <input id="iMax" type="number" step="0.1" value="10" /></label>
-            <label>Feedforward delay d_ff (L1 blocks) <input id="dffBlocks" type="number" min="0" step="1" value="5" /></label>
-            <label>Feedback delay d_fb (L1 blocks) <input id="dfbBlocks" type="number" min="0" step="1" value="5" /></label>
-            <label>D smoothing beta <input id="dSmoothBeta" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
+            <div id="taikoParamsGroup" class="mechanism-group">
+              <div class="mechanism-group-title">Taiko controller params</div>
+              <label>Controller mode
+                <select id="controllerMode">
+                  <option value="ff">ff</option>
+                  <option value="p">p</option>
+                  <option value="pi">pi</option>
+                  <option value="pd">pd</option>
+                  <option value="pdi">pdi</option>
+                  <option value="pi+ff">pi+ff</option>
+                  <option value="pdi+ff" selected>pdi+ff</option>
+                </select>
+              </label>
+              <label><input id="autoAlpha" type="checkbox" checked /> Auto alpha</label>
+              <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0.001667" /></label>
+              <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.004369" /></label>
+              <label>Kp <input id="kp" type="number" min="0" step="0.001" value="1" /></label>
+              <label>P floor (gwei/L2 gas) <input id="pMinGwei" type="number" step="0.0001" value="0" /></label>
+              <label>Ki <input id="ki" type="number" min="0" step="0.001" value="0" /></label>
+              <label>Kd <input id="kd" type="number" min="0" step="0.001" value="0" /></label>
+              <label>I min <input id="iMin" type="number" step="0.1" value="0" /></label>
+              <label>I max <input id="iMax" type="number" step="0.1" value="10" /></label>
+              <label>Feedforward delay d_ff (L1 blocks) <input id="dffBlocks" type="number" min="0" step="1" value="5" /></label>
+              <label>Feedback delay d_fb (L1 blocks) <input id="dfbBlocks" type="number" min="0" step="1" value="5" /></label>
+              <label>D smoothing beta <input id="dSmoothBeta" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
+            </div>
+            <div id="arbitrumParamsGroup" class="mechanism-group hidden">
+              <div class="mechanism-group-title">Arbitrum surplus pricer params</div>
+              <label>Initial price (gwei/L2 gas) <input id="arbInitialPriceGwei" type="number" min="0" step="0.0001" value="0.001" /></label>
+              <label>Inertia <input id="arbInertia" type="number" min="1" step="1" value="10" /></label>
+              <label>Equilibration units (L2 gas) <input id="arbEquilUnits" type="number" min="1" step="1000000" value="96000000" /></label>
+            </div>
             <label>Min fee (gwei/L2 gas) <input id="minFeeGwei" type="number" min="0" step="0.0001" value="0" /></label>
             <label>Max fee (gwei/L2 gas) <input id="maxFeeGwei" type="number" min="0" step="0.0001" value="1.0" /></label>
             <label>Initial vault (ETH) <input id="initialVaultEth" type="number" min="0" step="0.1" value="10" /></label>
@@ -561,6 +596,7 @@
         <p><strong>Derivative filter:</strong> <code>de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</code></p>
         <p><strong>Feedback state:</strong> <code>D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</code></p>
         <p><strong>Fee law:</strong> <code>P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</code></p>
+        <p><strong>Arbitrum-style surplus pricer:</strong> <code>surplus_t = vault_t - targetVault; desired'_t = -surplus_t / equilUnits; actual'_t = (surplus_t - surplus_(t-1)) / unitsAllocated; price_(t+1) = max(0, price_t + (desired'_t - actual'_t) * unitsAllocated / (equilUnits / inertia + unitsAllocated)); fee_t = clamp(price_t, minFee, maxFee)</code></p>
         <ul>
           <li><code>auto alpha</code> uses base throughput: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</code></li>
           <li>Assumes L1 block time = 12s; demand multipliers are <code>low=0.7x</code>, <code>base=1.0x</code>, <code>high=1.4x</code></li>

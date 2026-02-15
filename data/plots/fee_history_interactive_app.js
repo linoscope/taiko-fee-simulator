@@ -2,8 +2,12 @@
   const BLOB_GAS_PER_BLOB = 131072;
   const ERC20_TRANSFER_GAS = 70000;
   const L1_BLOCK_TIME_SECONDS = 12;
+  const DEFAULT_FEE_MECHANISM = "taiko";
   const DEFAULT_ALPHA_GAS = 0.001666666667;
   const DEFAULT_ALPHA_BLOB = 0.004369066667;
+  const DEFAULT_ARB_INITIAL_PRICE_GWEI = 0.001000000000;
+  const DEFAULT_ARB_INERTIA = 10;
+  const DEFAULT_ARB_EQUIL_UNITS = 96000000;
   const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({ low: 0.7, base: 1.0, high: 1.4 });
   const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
@@ -56,10 +60,16 @@
   const l1GasUsedInput = document.getElementById('l1GasUsed');
   const numBlobsInput = document.getElementById('numBlobs');
   const priorityFeeGweiInput = document.getElementById('priorityFeeGwei');
+  const feeMechanismInput = document.getElementById('feeMechanism');
+  const taikoParamsGroup = document.getElementById('taikoParamsGroup');
+  const arbitrumParamsGroup = document.getElementById('arbitrumParamsGroup');
   const autoAlphaInput = document.getElementById('autoAlpha');
   const alphaGasInput = document.getElementById('alphaGas');
   const alphaBlobInput = document.getElementById('alphaBlob');
   const controllerModeInput = document.getElementById('controllerMode');
+  const arbInitialPriceGweiInput = document.getElementById('arbInitialPriceGwei');
+  const arbInertiaInput = document.getElementById('arbInertia');
+  const arbEquilUnitsInput = document.getElementById('arbEquilUnits');
   const dffBlocksInput = document.getElementById('dffBlocks');
   const dfbBlocksInput = document.getElementById('dfbBlocks');
   const dSmoothBetaInput = document.getElementById('dSmoothBeta');
@@ -777,6 +787,7 @@
   }
 
   function scoreCurrentRangeNow() {
+    const mechanism = currentFeeMechanism();
     const [minB, maxB] = clampRange(minInput.value, maxInput.value);
     const score = updateScorecard(
       minB,
@@ -790,8 +801,8 @@
       uxBadness: score.uxBadness,
       healthBadness: score.healthBadness,
       totalBadness: score.totalBadness,
-      mode: controllerModeInput.value || 'ff',
-      alphaVariant: autoAlphaInput.checked ? 'auto' : 'current',
+      mode: mechanism === 'taiko' ? (controllerModeInput.value || 'ff') : 'arbitrum',
+      alphaVariant: mechanism === 'taiko' ? (autoAlphaInput.checked ? 'auto' : 'current') : 'n/a',
       alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
       alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
       kp: parsePositive(kpInput, 0),
@@ -820,6 +831,23 @@
     alphaGasInput.disabled = autoAlphaEnabled;
     alphaBlobInput.disabled = autoAlphaEnabled;
     if (!autoAlphaEnabled) ensureFeedforwardDefaults();
+  }
+
+  function currentFeeMechanism() {
+    if (!feeMechanismInput) return DEFAULT_FEE_MECHANISM;
+    return feeMechanismInput.value === 'arbitrum' ? 'arbitrum' : 'taiko';
+  }
+
+  function syncFeeMechanismUi() {
+    const mechanism = currentFeeMechanism();
+    if (taikoParamsGroup) taikoParamsGroup.classList.toggle('hidden', mechanism !== 'taiko');
+    if (arbitrumParamsGroup) arbitrumParamsGroup.classList.toggle('hidden', mechanism !== 'arbitrum');
+    if (mechanism === 'taiko') {
+      syncAutoAlphaInputs();
+    } else {
+      alphaGasInput.disabled = true;
+      alphaBlobInput.disabled = true;
+    }
   }
 
   function disableFeedforward() {
@@ -1144,7 +1172,11 @@
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
+    const feeMechanism = currentFeeMechanism();
     const controllerMode = controllerModeInput.value || 'ff';
+    const arbInitialPriceGwei = parsePositive(arbInitialPriceGweiInput, DEFAULT_ARB_INITIAL_PRICE_GWEI);
+    const arbInertia = Math.max(1, parsePositiveInt(arbInertiaInput, DEFAULT_ARB_INERTIA));
+    const arbEquilUnits = Math.max(1, parsePositive(arbEquilUnitsInput, DEFAULT_ARB_EQUIL_UNITS));
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, 5);
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 5);
     const derivBeta = clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1);
@@ -1166,12 +1198,17 @@
     const autoAlphaGas = l2GasPerProposalBase > 0 ? (l1GasUsed / l2GasPerProposalBase) : 0;
     const autoAlphaBlob =
       l2GasPerProposalBase > 0 ? ((numBlobs * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
-    if (autoAlphaEnabled) {
-      alphaGasInput.value = autoAlphaGas.toFixed(6);
-      alphaBlobInput.value = autoAlphaBlob.toFixed(6);
+    if (feeMechanism === 'taiko') {
+      if (autoAlphaEnabled) {
+        alphaGasInput.value = autoAlphaGas.toFixed(6);
+        alphaBlobInput.value = autoAlphaBlob.toFixed(6);
+      }
+      alphaGasInput.disabled = autoAlphaEnabled;
+      alphaBlobInput.disabled = autoAlphaEnabled;
+    } else {
+      alphaGasInput.disabled = true;
+      alphaBlobInput.disabled = true;
     }
-    alphaGasInput.disabled = autoAlphaEnabled;
-    alphaBlobInput.disabled = autoAlphaEnabled;
     const alphaGas = autoAlphaEnabled ? autoAlphaGas : parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS);
     const alphaBlob = autoAlphaEnabled ? autoAlphaBlob : parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB);
 
@@ -1180,7 +1217,9 @@
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
     const feeRangeWei = maxFeeWei - minFeeWei;
-    const modeFlags = getModeFlags(controllerMode);
+    const modeFlags = feeMechanism === 'taiko'
+      ? getModeFlags(controllerMode)
+      : { usesFeedforward: false, usesP: false, usesI: false, usesD: false };
     const modeUsesFeedforward = modeFlags.usesFeedforward;
     const modeUsesP = modeFlags.usesP;
     const modeUsesI = modeFlags.usesI;
@@ -1234,6 +1273,8 @@
     let integralState = 0;
     let epsilonPrev = 0;
     let derivFiltered = 0;
+    let arbPriceGwei = clampNum(arbInitialPriceGwei, minFeeGwei, maxFeeGwei);
+    let arbLastSurplusEth = initialVaultEth - targetVaultEth;
 
     for (let i = 0; i < n; i++) {
       const baseFeeWei = baseFeeGwei[i] * 1e9;
@@ -1251,33 +1292,52 @@
       derivedGasCostEth[i] = gasCostWei / 1e18;
       derivedBlobCostEth[i] = blobCostWei / 1e18;
       derivedPostingCostEth[i] = totalCostWei / 1e18;
-      const gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
-      const blobComponentWei = alphaBlob * blobBaseFeeFfWei;
-
       const fbIndex = i - dfbBlocks;
       const observedVault = fbIndex >= 0 ? derivedVaultEth[fbIndex] : initialVaultEth;
       const deficitEth = targetVaultEth - observedVault;
       const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
 
-      if (modeUsesI) {
-        integralState = clampNum(integralState + epsilon, iMin, iMax);
+      let gasComponentWei = 0;
+      let blobComponentWei = 0;
+      let feedforwardWei = 0;
+      let pTermWei = 0;
+      let iTermWei = 0;
+      let dTermWei = 0;
+      let feedbackWei = 0;
+      let chargedFeeWeiPerL2Gas = minFeeWei;
+
+      if (feeMechanism === 'taiko') {
+        gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
+        blobComponentWei = alphaBlob * blobBaseFeeFfWei;
+
+        if (modeUsesI) {
+          integralState = clampNum(integralState + epsilon, iMin, iMax);
+        } else {
+          integralState = 0;
+        }
+
+        const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
+        derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
+
+        const pTermWeiRaw = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
+        pTermWei = modeUsesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
+        iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
+        dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
+        feedbackWei = pTermWei + iTermWei + dTermWei;
+        feedforwardWei = modeUsesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
+        chargedFeeWeiPerL2Gas = Math.max(
+          minFeeWei,
+          Math.min(maxFeeWei, feedforwardWei + feedbackWei)
+        );
       } else {
         integralState = 0;
+        derivFiltered = 0;
+        const arbRawFeeWeiPerL2Gas = Math.max(0, arbPriceGwei * 1e9);
+        chargedFeeWeiPerL2Gas = Math.max(
+          minFeeWei,
+          Math.min(maxFeeWei, arbRawFeeWeiPerL2Gas)
+        );
       }
-
-      const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
-      derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
-
-      const pTermWeiRaw = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
-      const pTermWei = modeUsesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
-      const iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
-      const dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
-      const feedbackWei = pTermWei + iTermWei + dTermWei;
-      const feedforwardWei = modeUsesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
-      const chargedFeeWeiPerL2Gas = Math.max(
-        minFeeWei,
-        Math.min(maxFeeWei, feedforwardWei + feedbackWei)
-      );
 
       let clampState = 'none';
       if (chargedFeeWeiPerL2Gas <= minFeeWei + 1e-9) clampState = 'min';
@@ -1320,6 +1380,24 @@
         vault += postingRevenueEth;
         pendingRevenueEth = 0;
         vault -= derivedPostingCostEth[i];
+
+        if (feeMechanism === 'arbitrum') {
+          const unitsAllocated = Math.max(0, l2GasPerProposal_i);
+          const surplusEth = vault - targetVaultEth;
+          if (unitsAllocated > 0 && arbEquilUnits > 0 && arbInertia > 0) {
+            const inertiaUnits = arbEquilUnits / arbInertia;
+            const desiredDerivativeGwei = -(surplusEth * 1e9) / arbEquilUnits;
+            const actualDerivativeGwei =
+              ((surplusEth - arbLastSurplusEth) * 1e9) / unitsAllocated;
+            const changeDerivativeGwei = desiredDerivativeGwei - actualDerivativeGwei;
+            const denom = inertiaUnits + unitsAllocated;
+            const priceChangeGwei = denom > 0
+              ? (changeDerivativeGwei * unitsAllocated) / denom
+              : 0;
+            arbPriceGwei = Math.max(0, arbPriceGwei + priceChangeGwei);
+          }
+          arbLastSurplusEth = surplusEth;
+        }
       } else {
         derivedPostingRevenueAtPostEth[i] = null;
         derivedPostingPnLEth[i] = null;
@@ -1403,7 +1481,7 @@
     latestVaultGap.textContent = `${formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)} ETH`;
     if (sweepResults.length) {
       const sweepRange = getSweepRangeIndices();
-      if (sweepRange) {
+      if (sweepRange && feeMechanism === 'taiko') {
         const sweepScoreCfg = parseScoringWeights();
         const sweepSimCfg = {
           postEveryBlocks,
@@ -1814,6 +1892,10 @@
 
   async function runParameterSweep() {
     if (sweepRunning) return;
+    if (currentFeeMechanism() !== 'taiko') {
+      setSweepStatus('Sweep currently supports Taiko mechanism only. Switch Fee mechanism to "Taiko (P/I/D + FF)".');
+      return;
+    }
     recalcDerivedSeries();
     clearParamsStale();
 
@@ -1967,6 +2049,8 @@
 
   function applySweepBestCandidate() {
     if (!sweepBestCandidate) return;
+    if (feeMechanismInput) feeMechanismInput.value = 'taiko';
+    syncFeeMechanismUi();
     controllerModeInput.value = sweepBestCandidate.mode;
     applyControllerModePreset(sweepBestCandidate.mode);
     if (sweepBestCandidate.alphaVariant === 'zero') {
@@ -2460,7 +2544,7 @@
   );
 
   setSweepUiState(false);
-  setSweepStatus('Sweep idle. Sweeps Kp/Ki/Imax across pdi + pdi+ff with Kd fixed at 0 and alpha variants (current, zero).');
+  setSweepStatus('Sweep idle. Taiko-only sweep: Kp/Ki/Imax across pdi + pdi+ff with Kd fixed at 0 and alpha variants (current, zero).');
   setSweepHoverText('Hover point: -');
   minInput.value = '';
   maxInput.value = '';
@@ -2593,6 +2677,13 @@
     });
   }
 
+  if (feeMechanismInput) {
+    feeMechanismInput.addEventListener('change', function () {
+      syncFeeMechanismUi();
+      markParamsStale('Fee mechanism changed. Click Recompute derived charts.');
+    });
+  }
+
   controllerModeInput.addEventListener('change', function () {
     applyControllerModePreset(controllerModeInput.value || 'ff');
     markParamsStale('Controller mode changed. Click Recompute derived charts.');
@@ -2660,6 +2751,9 @@
     priorityFeeGweiInput,
     alphaGasInput,
     alphaBlobInput,
+    arbInitialPriceGweiInput,
+    arbInertiaInput,
+    arbEquilUnitsInput,
     dffBlocksInput,
     dfbBlocksInput,
     dSmoothBetaInput,
@@ -2743,5 +2837,6 @@
   }
 
   markScoreStale('not computed yet');
+  syncFeeMechanismUi();
   initDatasets();
 })();

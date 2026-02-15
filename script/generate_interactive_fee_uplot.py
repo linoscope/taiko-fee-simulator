@@ -23,6 +23,7 @@ DEFAULT_MIN_FEE_GWEI = 0.0
 DEFAULT_MAX_FEE_GWEI = 1.0
 DEFAULT_INITIAL_VAULT_ETH = 10.0
 DEFAULT_TARGET_VAULT_ETH = 10.0
+DEFAULT_FEE_MECHANISM = "taiko"
 DEFAULT_CONTROLLER_MODE = "pdi+ff"
 DEFAULT_D_FF_BLOCKS = 5
 DEFAULT_D_FB_BLOCKS = 5
@@ -33,6 +34,9 @@ DEFAULT_P_TERM_MIN_GWEI = 0.0
 DEFAULT_DERIV_BETA = 0.8
 DEFAULT_I_MIN = 0.0
 DEFAULT_I_MAX = 10.0
+DEFAULT_ARB_INITIAL_PRICE_GWEI = 0.001
+DEFAULT_ARB_INERTIA = 10
+DEFAULT_ARB_EQUIL_UNITS = 96_000_000
 DEFAULT_DEFICIT_DEADBAND_PCT = 5.0
 
 DEFAULT_HEALTH_WEIGHT = 0.75
@@ -256,8 +260,12 @@ def build_app_js():
   const BLOB_GAS_PER_BLOB = {BLOB_GAS_PER_BLOB};
   const ERC20_TRANSFER_GAS = {ERC20_TRANSFER_GAS};
   const L1_BLOCK_TIME_SECONDS = {L1_BLOCK_TIME_SECONDS};
+  const DEFAULT_FEE_MECHANISM = {json.dumps(DEFAULT_FEE_MECHANISM)};
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
+  const DEFAULT_ARB_INITIAL_PRICE_GWEI = {DEFAULT_ARB_INITIAL_PRICE_GWEI:.12f};
+  const DEFAULT_ARB_INERTIA = {DEFAULT_ARB_INERTIA};
+  const DEFAULT_ARB_EQUIL_UNITS = {DEFAULT_ARB_EQUIL_UNITS};
   const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({{ low: 0.7, base: 1.0, high: 1.4 }});
   const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
@@ -310,10 +318,16 @@ def build_app_js():
   const l1GasUsedInput = document.getElementById('l1GasUsed');
   const numBlobsInput = document.getElementById('numBlobs');
   const priorityFeeGweiInput = document.getElementById('priorityFeeGwei');
+  const feeMechanismInput = document.getElementById('feeMechanism');
+  const taikoParamsGroup = document.getElementById('taikoParamsGroup');
+  const arbitrumParamsGroup = document.getElementById('arbitrumParamsGroup');
   const autoAlphaInput = document.getElementById('autoAlpha');
   const alphaGasInput = document.getElementById('alphaGas');
   const alphaBlobInput = document.getElementById('alphaBlob');
   const controllerModeInput = document.getElementById('controllerMode');
+  const arbInitialPriceGweiInput = document.getElementById('arbInitialPriceGwei');
+  const arbInertiaInput = document.getElementById('arbInertia');
+  const arbEquilUnitsInput = document.getElementById('arbEquilUnits');
   const dffBlocksInput = document.getElementById('dffBlocks');
   const dfbBlocksInput = document.getElementById('dfbBlocks');
   const dSmoothBetaInput = document.getElementById('dSmoothBeta');
@@ -1031,6 +1045,7 @@ def build_app_js():
   }}
 
   function scoreCurrentRangeNow() {{
+    const mechanism = currentFeeMechanism();
     const [minB, maxB] = clampRange(minInput.value, maxInput.value);
     const score = updateScorecard(
       minB,
@@ -1044,8 +1059,8 @@ def build_app_js():
       uxBadness: score.uxBadness,
       healthBadness: score.healthBadness,
       totalBadness: score.totalBadness,
-      mode: controllerModeInput.value || 'ff',
-      alphaVariant: autoAlphaInput.checked ? 'auto' : 'current',
+      mode: mechanism === 'taiko' ? (controllerModeInput.value || 'ff') : 'arbitrum',
+      alphaVariant: mechanism === 'taiko' ? (autoAlphaInput.checked ? 'auto' : 'current') : 'n/a',
       alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
       alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
       kp: parsePositive(kpInput, 0),
@@ -1074,6 +1089,23 @@ def build_app_js():
     alphaGasInput.disabled = autoAlphaEnabled;
     alphaBlobInput.disabled = autoAlphaEnabled;
     if (!autoAlphaEnabled) ensureFeedforwardDefaults();
+  }}
+
+  function currentFeeMechanism() {{
+    if (!feeMechanismInput) return DEFAULT_FEE_MECHANISM;
+    return feeMechanismInput.value === 'arbitrum' ? 'arbitrum' : 'taiko';
+  }}
+
+  function syncFeeMechanismUi() {{
+    const mechanism = currentFeeMechanism();
+    if (taikoParamsGroup) taikoParamsGroup.classList.toggle('hidden', mechanism !== 'taiko');
+    if (arbitrumParamsGroup) arbitrumParamsGroup.classList.toggle('hidden', mechanism !== 'arbitrum');
+    if (mechanism === 'taiko') {{
+      syncAutoAlphaInputs();
+    }} else {{
+      alphaGasInput.disabled = true;
+      alphaBlobInput.disabled = true;
+    }}
   }}
 
   function disableFeedforward() {{
@@ -1398,7 +1430,11 @@ def build_app_js():
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
     const numBlobs = parsePositive(numBlobsInput, 0);
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
+    const feeMechanism = currentFeeMechanism();
     const controllerMode = controllerModeInput.value || 'ff';
+    const arbInitialPriceGwei = parsePositive(arbInitialPriceGweiInput, DEFAULT_ARB_INITIAL_PRICE_GWEI);
+    const arbInertia = Math.max(1, parsePositiveInt(arbInertiaInput, DEFAULT_ARB_INERTIA));
+    const arbEquilUnits = Math.max(1, parsePositive(arbEquilUnitsInput, DEFAULT_ARB_EQUIL_UNITS));
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, {DEFAULT_D_FF_BLOCKS});
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
     const derivBeta = clampNum(parseNumber(dSmoothBetaInput, {DEFAULT_DERIV_BETA}), 0, 1);
@@ -1420,12 +1456,17 @@ def build_app_js():
     const autoAlphaGas = l2GasPerProposalBase > 0 ? (l1GasUsed / l2GasPerProposalBase) : 0;
     const autoAlphaBlob =
       l2GasPerProposalBase > 0 ? ((numBlobs * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
-    if (autoAlphaEnabled) {{
-      alphaGasInput.value = autoAlphaGas.toFixed(6);
-      alphaBlobInput.value = autoAlphaBlob.toFixed(6);
+    if (feeMechanism === 'taiko') {{
+      if (autoAlphaEnabled) {{
+        alphaGasInput.value = autoAlphaGas.toFixed(6);
+        alphaBlobInput.value = autoAlphaBlob.toFixed(6);
+      }}
+      alphaGasInput.disabled = autoAlphaEnabled;
+      alphaBlobInput.disabled = autoAlphaEnabled;
+    }} else {{
+      alphaGasInput.disabled = true;
+      alphaBlobInput.disabled = true;
     }}
-    alphaGasInput.disabled = autoAlphaEnabled;
-    alphaBlobInput.disabled = autoAlphaEnabled;
     const alphaGas = autoAlphaEnabled ? autoAlphaGas : parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS);
     const alphaBlob = autoAlphaEnabled ? autoAlphaBlob : parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB);
 
@@ -1434,7 +1475,9 @@ def build_app_js():
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
     const feeRangeWei = maxFeeWei - minFeeWei;
-    const modeFlags = getModeFlags(controllerMode);
+    const modeFlags = feeMechanism === 'taiko'
+      ? getModeFlags(controllerMode)
+      : {{ usesFeedforward: false, usesP: false, usesI: false, usesD: false }};
     const modeUsesFeedforward = modeFlags.usesFeedforward;
     const modeUsesP = modeFlags.usesP;
     const modeUsesI = modeFlags.usesI;
@@ -1488,6 +1531,8 @@ def build_app_js():
     let integralState = 0;
     let epsilonPrev = 0;
     let derivFiltered = 0;
+    let arbPriceGwei = clampNum(arbInitialPriceGwei, minFeeGwei, maxFeeGwei);
+    let arbLastSurplusEth = initialVaultEth - targetVaultEth;
 
     for (let i = 0; i < n; i++) {{
       const baseFeeWei = baseFeeGwei[i] * 1e9;
@@ -1505,33 +1550,52 @@ def build_app_js():
       derivedGasCostEth[i] = gasCostWei / 1e18;
       derivedBlobCostEth[i] = blobCostWei / 1e18;
       derivedPostingCostEth[i] = totalCostWei / 1e18;
-      const gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
-      const blobComponentWei = alphaBlob * blobBaseFeeFfWei;
-
       const fbIndex = i - dfbBlocks;
       const observedVault = fbIndex >= 0 ? derivedVaultEth[fbIndex] : initialVaultEth;
       const deficitEth = targetVaultEth - observedVault;
       const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
 
-      if (modeUsesI) {{
-        integralState = clampNum(integralState + epsilon, iMin, iMax);
+      let gasComponentWei = 0;
+      let blobComponentWei = 0;
+      let feedforwardWei = 0;
+      let pTermWei = 0;
+      let iTermWei = 0;
+      let dTermWei = 0;
+      let feedbackWei = 0;
+      let chargedFeeWeiPerL2Gas = minFeeWei;
+
+      if (feeMechanism === 'taiko') {{
+        gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
+        blobComponentWei = alphaBlob * blobBaseFeeFfWei;
+
+        if (modeUsesI) {{
+          integralState = clampNum(integralState + epsilon, iMin, iMax);
+        }} else {{
+          integralState = 0;
+        }}
+
+        const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
+        derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
+
+        const pTermWeiRaw = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
+        pTermWei = modeUsesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
+        iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
+        dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
+        feedbackWei = pTermWei + iTermWei + dTermWei;
+        feedforwardWei = modeUsesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
+        chargedFeeWeiPerL2Gas = Math.max(
+          minFeeWei,
+          Math.min(maxFeeWei, feedforwardWei + feedbackWei)
+        );
       }} else {{
         integralState = 0;
+        derivFiltered = 0;
+        const arbRawFeeWeiPerL2Gas = Math.max(0, arbPriceGwei * 1e9);
+        chargedFeeWeiPerL2Gas = Math.max(
+          minFeeWei,
+          Math.min(maxFeeWei, arbRawFeeWeiPerL2Gas)
+        );
       }}
-
-      const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
-      derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
-
-      const pTermWeiRaw = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
-      const pTermWei = modeUsesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
-      const iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
-      const dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
-      const feedbackWei = pTermWei + iTermWei + dTermWei;
-      const feedforwardWei = modeUsesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
-      const chargedFeeWeiPerL2Gas = Math.max(
-        minFeeWei,
-        Math.min(maxFeeWei, feedforwardWei + feedbackWei)
-      );
 
       let clampState = 'none';
       if (chargedFeeWeiPerL2Gas <= minFeeWei + 1e-9) clampState = 'min';
@@ -1574,6 +1638,24 @@ def build_app_js():
         vault += postingRevenueEth;
         pendingRevenueEth = 0;
         vault -= derivedPostingCostEth[i];
+
+        if (feeMechanism === 'arbitrum') {{
+          const unitsAllocated = Math.max(0, l2GasPerProposal_i);
+          const surplusEth = vault - targetVaultEth;
+          if (unitsAllocated > 0 && arbEquilUnits > 0 && arbInertia > 0) {{
+            const inertiaUnits = arbEquilUnits / arbInertia;
+            const desiredDerivativeGwei = -(surplusEth * 1e9) / arbEquilUnits;
+            const actualDerivativeGwei =
+              ((surplusEth - arbLastSurplusEth) * 1e9) / unitsAllocated;
+            const changeDerivativeGwei = desiredDerivativeGwei - actualDerivativeGwei;
+            const denom = inertiaUnits + unitsAllocated;
+            const priceChangeGwei = denom > 0
+              ? (changeDerivativeGwei * unitsAllocated) / denom
+              : 0;
+            arbPriceGwei = Math.max(0, arbPriceGwei + priceChangeGwei);
+          }}
+          arbLastSurplusEth = surplusEth;
+        }}
       }} else {{
         derivedPostingRevenueAtPostEth[i] = null;
         derivedPostingPnLEth[i] = null;
@@ -1657,7 +1739,7 @@ def build_app_js():
     latestVaultGap.textContent = `${{formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)}} ETH`;
     if (sweepResults.length) {{
       const sweepRange = getSweepRangeIndices();
-      if (sweepRange) {{
+      if (sweepRange && feeMechanism === 'taiko') {{
         const sweepScoreCfg = parseScoringWeights();
         const sweepSimCfg = {{
           postEveryBlocks,
@@ -2068,6 +2150,10 @@ def build_app_js():
 
   async function runParameterSweep() {{
     if (sweepRunning) return;
+    if (currentFeeMechanism() !== 'taiko') {{
+      setSweepStatus('Sweep currently supports Taiko mechanism only. Switch Fee mechanism to "Taiko (P/I/D + FF)".');
+      return;
+    }}
     recalcDerivedSeries();
     clearParamsStale();
 
@@ -2221,6 +2307,8 @@ def build_app_js():
 
   function applySweepBestCandidate() {{
     if (!sweepBestCandidate) return;
+    if (feeMechanismInput) feeMechanismInput.value = 'taiko';
+    syncFeeMechanismUi();
     controllerModeInput.value = sweepBestCandidate.mode;
     applyControllerModePreset(sweepBestCandidate.mode);
     if (sweepBestCandidate.alphaVariant === 'zero') {{
@@ -2714,7 +2802,7 @@ def build_app_js():
   );
 
   setSweepUiState(false);
-  setSweepStatus('Sweep idle. Sweeps Kp/Ki/Imax across pdi + pdi+ff with Kd fixed at 0 and alpha variants (current, zero).');
+  setSweepStatus('Sweep idle. Taiko-only sweep: Kp/Ki/Imax across pdi + pdi+ff with Kd fixed at 0 and alpha variants (current, zero).');
   setSweepHoverText('Hover point: -');
   minInput.value = '';
   maxInput.value = '';
@@ -2847,6 +2935,13 @@ def build_app_js():
     }});
   }}
 
+  if (feeMechanismInput) {{
+    feeMechanismInput.addEventListener('change', function () {{
+      syncFeeMechanismUi();
+      markParamsStale('Fee mechanism changed. Click Recompute derived charts.');
+    }});
+  }}
+
   controllerModeInput.addEventListener('change', function () {{
     applyControllerModePreset(controllerModeInput.value || 'ff');
     markParamsStale('Controller mode changed. Click Recompute derived charts.');
@@ -2914,6 +3009,9 @@ def build_app_js():
     priorityFeeGweiInput,
     alphaGasInput,
     alphaBlobInput,
+    arbInitialPriceGweiInput,
+    arbInertiaInput,
+    arbEquilUnitsInput,
     dffBlocksInput,
     dfbBlocksInput,
     dSmoothBetaInput,
@@ -2997,6 +3095,7 @@ def build_app_js():
   }}
 
   markScoreStale('not computed yet');
+  syncFeeMechanismUi();
   initDatasets();
 }})();
 """
@@ -3099,6 +3198,26 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
       box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.25);
     }}
     .assumptions-title {{ font-size: 13px; color: var(--muted); margin-bottom: 8px; }}
+    .mechanism-group {{
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }}
+    .mechanism-group.hidden {{
+      display: none;
+    }}
+    .mechanism-group-title {{
+      width: 100%;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+    }}
     .dirty-hint {{
       margin: 4px 0 8px;
       font-size: 12px;
@@ -3420,29 +3539,44 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
           </div>
           <div class=\"dirty-hint\" id=\"paramsDirtyHint\"></div>
           <div class=\"controls\">
-            <label>Controller mode
-              <select id=\"controllerMode\">
-                <option value=\"ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "ff" else ""}>ff</option>
-                <option value=\"p\"{" selected" if DEFAULT_CONTROLLER_MODE == "p" else ""}>p</option>
-                <option value=\"pi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi" else ""}>pi</option>
-                <option value=\"pd\"{" selected" if DEFAULT_CONTROLLER_MODE == "pd" else ""}>pd</option>
-                <option value=\"pdi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pdi" else ""}>pdi</option>
-                <option value=\"pi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi+ff" else ""}>pi+ff</option>
-                <option value=\"pdi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pdi+ff" else ""}>pdi+ff</option>
+            <label>Fee mechanism
+              <select id=\"feeMechanism\">
+                <option value=\"taiko\"{" selected" if DEFAULT_FEE_MECHANISM == "taiko" else ""}>Taiko (P/I/D + FF)</option>
+                <option value=\"arbitrum\"{" selected" if DEFAULT_FEE_MECHANISM == "arbitrum" else ""}>Arbitrum (surplus pricer)</option>
               </select>
             </label>
-            <label><input id=\"autoAlpha\" type=\"checkbox\" checked /> Auto alpha</label>
-            <label>Alpha gas <input id=\"alphaGas\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_GAS:.6f}\" /></label>
-            <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
-            <label>Kp <input id=\"kp\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KP:g}\" /></label>
-            <label>P floor (gwei/L2 gas) <input id=\"pMinGwei\" type=\"number\" step=\"0.0001\" value=\"{DEFAULT_P_TERM_MIN_GWEI:g}\" /></label>
-            <label>Ki <input id=\"ki\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KI:g}\" /></label>
-            <label>Kd <input id=\"kd\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KD:g}\" /></label>
-            <label>I min <input id=\"iMin\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MIN:g}\" /></label>
-            <label>I max <input id=\"iMax\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MAX:g}\" /></label>
-            <label>Feedforward delay d_ff (L1 blocks) <input id=\"dffBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FF_BLOCKS}\" /></label>
-            <label>Feedback delay d_fb (L1 blocks) <input id=\"dfbBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FB_BLOCKS}\" /></label>
-            <label>D smoothing beta <input id=\"dSmoothBeta\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"{DEFAULT_DERIV_BETA:g}\" /></label>
+            <div id=\"taikoParamsGroup\" class=\"mechanism-group\">
+              <div class=\"mechanism-group-title\">Taiko controller params</div>
+              <label>Controller mode
+                <select id=\"controllerMode\">
+                  <option value=\"ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "ff" else ""}>ff</option>
+                  <option value=\"p\"{" selected" if DEFAULT_CONTROLLER_MODE == "p" else ""}>p</option>
+                  <option value=\"pi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi" else ""}>pi</option>
+                  <option value=\"pd\"{" selected" if DEFAULT_CONTROLLER_MODE == "pd" else ""}>pd</option>
+                  <option value=\"pdi\"{" selected" if DEFAULT_CONTROLLER_MODE == "pdi" else ""}>pdi</option>
+                  <option value=\"pi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pi+ff" else ""}>pi+ff</option>
+                  <option value=\"pdi+ff\"{" selected" if DEFAULT_CONTROLLER_MODE == "pdi+ff" else ""}>pdi+ff</option>
+                </select>
+              </label>
+              <label><input id=\"autoAlpha\" type=\"checkbox\" checked /> Auto alpha</label>
+              <label>Alpha gas <input id=\"alphaGas\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_GAS:.6f}\" /></label>
+              <label>Alpha blob <input id=\"alphaBlob\" type=\"number\" min=\"0\" step=\"0.000001\" value=\"{DEFAULT_ALPHA_BLOB:.6f}\" /></label>
+              <label>Kp <input id=\"kp\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KP:g}\" /></label>
+              <label>P floor (gwei/L2 gas) <input id=\"pMinGwei\" type=\"number\" step=\"0.0001\" value=\"{DEFAULT_P_TERM_MIN_GWEI:g}\" /></label>
+              <label>Ki <input id=\"ki\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KI:g}\" /></label>
+              <label>Kd <input id=\"kd\" type=\"number\" min=\"0\" step=\"0.001\" value=\"{DEFAULT_KD:g}\" /></label>
+              <label>I min <input id=\"iMin\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MIN:g}\" /></label>
+              <label>I max <input id=\"iMax\" type=\"number\" step=\"0.1\" value=\"{DEFAULT_I_MAX:g}\" /></label>
+              <label>Feedforward delay d_ff (L1 blocks) <input id=\"dffBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FF_BLOCKS}\" /></label>
+              <label>Feedback delay d_fb (L1 blocks) <input id=\"dfbBlocks\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_D_FB_BLOCKS}\" /></label>
+              <label>D smoothing beta <input id=\"dSmoothBeta\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"{DEFAULT_DERIV_BETA:g}\" /></label>
+            </div>
+            <div id=\"arbitrumParamsGroup\" class=\"mechanism-group hidden\">
+              <div class=\"mechanism-group-title\">Arbitrum surplus pricer params</div>
+              <label>Initial price (gwei/L2 gas) <input id=\"arbInitialPriceGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_ARB_INITIAL_PRICE_GWEI:g}\" /></label>
+              <label>Inertia <input id=\"arbInertia\" type=\"number\" min=\"1\" step=\"1\" value=\"{DEFAULT_ARB_INERTIA}\" /></label>
+              <label>Equilibration units (L2 gas) <input id=\"arbEquilUnits\" type=\"number\" min=\"1\" step=\"1000000\" value=\"{DEFAULT_ARB_EQUIL_UNITS}\" /></label>
+            </div>
             <label>Min fee (gwei/L2 gas) <input id=\"minFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MIN_FEE_GWEI:g}\" /></label>
             <label>Max fee (gwei/L2 gas) <input id=\"maxFeeGwei\" type=\"number\" min=\"0\" step=\"0.0001\" value=\"{DEFAULT_MAX_FEE_GWEI:.1f}\" /></label>
             <label>Initial vault (ETH) <input id=\"initialVaultEth\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_INITIAL_VAULT_ETH:g}\" /></label>
@@ -3590,6 +3724,7 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
         <p><strong>Derivative filter:</strong> <code>de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</code></p>
         <p><strong>Feedback state:</strong> <code>D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</code></p>
         <p><strong>Fee law:</strong> <code>P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</code></p>
+        <p><strong>Arbitrum-style surplus pricer:</strong> <code>surplus_t = vault_t - targetVault; desired'_t = -surplus_t / equilUnits; actual'_t = (surplus_t - surplus_(t-1)) / unitsAllocated; price_(t+1) = max(0, price_t + (desired'_t - actual'_t) * unitsAllocated / (equilUnits / inertia + unitsAllocated)); fee_t = clamp(price_t, minFee, maxFee)</code></p>
         <ul>
           <li><code>auto alpha</code> uses base throughput: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</code></li>
           <li>Assumes L1 block time = 12s; demand multipliers are <code>low=0.7x</code>, <code>base=1.0x</code>, <code>high=1.4x</code></li>
