@@ -5,6 +5,7 @@ import csv
 import json
 import re
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 
 import requests
@@ -59,6 +60,71 @@ DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]
 DEFAULT_SWEEP_KD_VALUES = [0.0]
 DEFAULT_SWEEP_I_MAX_VALUES = [5.0, 10.0, 100.0]
 DEFAULT_SWEEP_MAX_BLOCKS = 200_000
+DEFAULT_RANGE_PRESETS = [
+    {
+        "id": "base_spike_heavy",
+        "label": "Base spike heavy (year2021)",
+        "dataset_id": "year2021",
+        "min_block": 13_180_019,
+        "max_block": 13_240_018,
+    },
+    {
+        "id": "blob_spike_heavy",
+        "label": "Blob spike heavy (prior365)",
+        "dataset_id": "prior365",
+        "min_block": 20_113_898,
+        "max_block": 20_173_897,
+    },
+    {
+        "id": "sustained_base_high",
+        "label": "Sustained high base fee (year2021)",
+        "dataset_id": "year2021",
+        "min_block": 13_500_019,
+        "max_block": 13_560_018,
+    },
+    {
+        "id": "sustained_blob_high",
+        "label": "Sustained high blob fee (prior365)",
+        "dataset_id": "prior365",
+        "min_block": 19_523_898,
+        "max_block": 19_583_897,
+    },
+    {
+        "id": "stable_nonzero",
+        "label": "Stable low-fee nonzero period (current365)",
+        "dataset_id": "current365",
+        "min_block": 22_951_899,
+        "max_block": 23_011_898,
+    },
+    {
+        "id": "base_spike_current_oct_heavy",
+        "label": "Base spike heavy (current365, Oct 2025)",
+        "dataset_id": "current365",
+        "min_block": 23_516_899,
+        "max_block": 23_576_898,
+    },
+    {
+        "id": "base_spike_current_oct_moderate",
+        "label": "Base spike moderate (current365, early Oct 2025)",
+        "dataset_id": "current365",
+        "min_block": 23_451_899,
+        "max_block": 23_511_898,
+    },
+    {
+        "id": "base_shift_up_plateau",
+        "label": "Base fee shift-up then plateau (year2021)",
+        "dataset_id": "year2021",
+        "min_block": 13_465_019,
+        "max_block": 13_525_018,
+    },
+    {
+        "id": "blob_shift_up_plateau",
+        "label": "Blob fee shift-up then plateau (current365)",
+        "dataset_id": "current365",
+        "min_block": 22_291_899,
+        "max_block": 22_351_898,
+    },
+]
 
 DEFAULT_L2_GAS_PER_L1_BLOCK = (
     DEFAULT_L2_GAS_PER_L2_BLOCK * (L1_BLOCK_TIME_SECONDS / DEFAULT_L2_BLOCK_TIME_SECONDS)
@@ -282,6 +348,25 @@ def build_app_js():
   for (const meta of DATASET_MANIFEST) {{
     if (meta && meta.id) DATASET_BY_ID[String(meta.id)] = meta;
   }}
+  const RANGE_PRESETS = (window.__feeRangePresets && Array.isArray(window.__feeRangePresets))
+    ? window.__feeRangePresets.slice()
+    : [];
+  const RANGE_PRESET_BY_ID = Object.create(null);
+  for (const item of RANGE_PRESETS) {{
+    if (!item || item.id == null) continue;
+    const id = String(item.id);
+    const datasetId = item.dataset_id == null ? '' : String(item.dataset_id);
+    const minBlock = Number(item.min_block);
+    const maxBlock = Number(item.max_block);
+    if (!datasetId || !Number.isFinite(minBlock) || !Number.isFinite(maxBlock)) continue;
+    RANGE_PRESET_BY_ID[id] = {{
+      id,
+      label: item.label == null ? id : String(item.label),
+      dataset_id: datasetId,
+      min_block: Math.floor(Math.min(minBlock, maxBlock)),
+      max_block: Math.floor(Math.max(minBlock, maxBlock)),
+    }};
+  }}
 
   let activeDatasetId = null;
   let blocks = [];
@@ -306,6 +391,7 @@ def build_app_js():
   const busySpinner = document.getElementById('busySpinner');
   const busyOverlay = document.getElementById('busyOverlay');
   const datasetRangeInput = document.getElementById('datasetRange');
+  const rangePresetInput = document.getElementById('rangePreset');
   const paramsCard = document.getElementById('paramsCard');
   const paramsDirtyHint = document.getElementById('paramsDirtyHint');
 
@@ -497,6 +583,18 @@ def build_app_js():
     }}, 0);
   }}
 
+  function runAsyncUiTask(statusMsg, task) {{
+    if (statusMsg) setStatus(statusMsg);
+    setUiBusy(true);
+    window.setTimeout(async function () {{
+      try {{
+        await task();
+      }} finally {{
+        setUiBusy(false);
+      }}
+    }}, 0);
+  }}
+
   function setStatus(msg) {{
     status.textContent = msg || '';
   }}
@@ -563,6 +661,86 @@ def build_app_js():
       const id = meta && meta.id ? String(meta.id) : '';
       return `<option value="${{id}}">${{label}}</option>`;
     }}).join('');
+  }}
+
+  function getRangePresetMeta(presetId) {{
+    if (!presetId) return null;
+    return RANGE_PRESET_BY_ID[String(presetId)] || null;
+  }}
+
+  function setRangePresetOptions() {{
+    if (!rangePresetInput) return;
+
+    const grouped = Object.create(null);
+    for (const item of RANGE_PRESETS) {{
+      const preset = getRangePresetMeta(item && item.id);
+      if (!preset) continue;
+      if (!getDatasetMeta(preset.dataset_id)) continue;
+      const key = preset.dataset_id;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(preset);
+    }}
+
+    const datasetOrder = DATASET_MANIFEST
+      .map(function (meta) {{ return meta && meta.id ? String(meta.id) : ''; }})
+      .filter(Boolean);
+
+    const fragments = ['<option value="">Custom / manual range</option>'];
+    for (const datasetId of datasetOrder) {{
+      const presets = grouped[datasetId];
+      if (!presets || !presets.length) continue;
+      const meta = getDatasetMeta(datasetId);
+      const groupLabel = htmlEscape((meta && meta.label) ? String(meta.label) : datasetId);
+      fragments.push(`<optgroup label="${{groupLabel}}">`);
+      for (const preset of presets) {{
+        const blocks = `${{preset.min_block.toLocaleString()}}-${{preset.max_block.toLocaleString()}}`;
+        fragments.push(
+          `<option value="${{htmlEscape(preset.id)}}">${{htmlEscape(preset.label)}} [${{blocks}}]</option>`
+        );
+      }}
+      fragments.push('</optgroup>');
+    }}
+    rangePresetInput.innerHTML = fragments.join('');
+    rangePresetInput.disabled = fragments.length <= 1;
+    rangePresetInput.value = '';
+  }}
+
+  function refreshRangePresetSelection() {{
+    if (!rangePresetInput) return;
+    if (!activeDatasetId || !datasetReady) {{
+      rangePresetInput.value = '';
+      return;
+    }}
+    const curMin = Number(minInput.value);
+    const curMax = Number(maxInput.value);
+    if (!Number.isFinite(curMin) || !Number.isFinite(curMax)) {{
+      rangePresetInput.value = '';
+      return;
+    }}
+    const minB = Math.trunc(Math.min(curMin, curMax));
+    const maxB = Math.trunc(Math.max(curMin, curMax));
+    for (const item of RANGE_PRESETS) {{
+      const preset = getRangePresetMeta(item && item.id);
+      if (!preset) continue;
+      if (preset.dataset_id === activeDatasetId && preset.min_block === minB && preset.max_block === maxB) {{
+        rangePresetInput.value = preset.id;
+        return;
+      }}
+    }}
+    rangePresetInput.value = '';
+  }}
+
+  async function applyRangePresetById(presetId) {{
+    const preset = getRangePresetMeta(presetId);
+    if (!preset) return;
+
+    if (preset.dataset_id !== activeDatasetId) {{
+      await activateDataset(preset.dataset_id, false);
+    }}
+
+    applyRange(preset.min_block, preset.max_block, null);
+    if (rangePresetInput) rangePresetInput.value = preset.id;
+    setStatus(`Applied representative range: ${{preset.label}}`);
   }}
 
   function ensureDatasetLoaded(datasetId) {{
@@ -849,6 +1027,15 @@ def build_app_js():
       sum += w * values[i];
     }}
     return sumW > 0 ? (sum / sumW) : 0;
+  }}
+
+  function htmlEscape(raw) {{
+    return String(raw)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }}
 
   function getModeFlags(mode) {{
@@ -2698,6 +2885,7 @@ def build_app_js():
     syncing = false;
     if (rangeChanged) resetSweepState('range changed');
     markScoreStale('range changed');
+    refreshRangePresetSelection();
   }}
 
   function resizePlots() {{
@@ -3079,8 +3267,19 @@ def build_app_js():
     }});
   }}
 
+  if (rangePresetInput) {{
+    rangePresetInput.addEventListener('change', function () {{
+      const presetId = rangePresetInput.value ? String(rangePresetInput.value) : '';
+      if (!presetId) return;
+      runAsyncUiTask('Applying representative range...', async function () {{
+        await applyRangePresetById(presetId);
+      }});
+    }});
+  }}
+
   async function initDatasets() {{
     setDatasetRangeOptions();
+    setRangePresetOptions();
     const initialId = resolveInitialDatasetId();
     if (!initialId) {{
       setStatus('No dataset configured. Regenerate with --dataset entries.');
@@ -3101,25 +3300,77 @@ def build_app_js():
 """
 
 
-def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None):
+def build_html(
+    title,
+    js_filename,
+    dataset_options=None,
+    initial_dataset_id=None,
+    range_presets=None,
+):
     dataset_options = dataset_options or []
+    range_presets = range_presets or []
     initial_dataset_id = initial_dataset_id or (dataset_options[0]["id"] if dataset_options else "")
     range_selector_html = ""
-    if dataset_options:
-        opts = []
-        for item in dataset_options:
-            value = item["id"]
-            label = item["label"]
-            selected = " selected" if value == initial_dataset_id else ""
-            opts.append(f'<option value="{value}"{selected}>{label}</option>')
-        options_html = "\n".join(opts)
-        range_selector_html = f"""
-        <div class=\"controls\">
+    if dataset_options or range_presets:
+        dataset_html = ""
+        if dataset_options:
+            opts = []
+            for item in dataset_options:
+                value = escape(str(item["id"]), quote=True)
+                label = escape(str(item["label"]))
+                selected = " selected" if item["id"] == initial_dataset_id else ""
+                opts.append(f'<option value="{value}"{selected}>{label}</option>')
+            options_html = "\n".join(opts)
+            dataset_html = f"""
           <label>Data range
             <select id=\"datasetRange\">
               {options_html}
             </select>
           </label>
+"""
+
+        preset_html = ""
+        if range_presets:
+            dataset_label_by_id = {
+                str(item["id"]): str(item.get("label", item["id"])) for item in dataset_options
+            }
+            grouped = {}
+            for preset in range_presets:
+                dataset_id = str(preset.get("dataset_id", "")).strip()
+                if not dataset_id:
+                    continue
+                grouped.setdefault(dataset_id, []).append(preset)
+
+            preset_lines = ['<option value="">Custom / manual range</option>']
+            ordered_ids = [str(item["id"]) for item in dataset_options if str(item["id"]) in grouped]
+            remaining_ids = [dsid for dsid in grouped.keys() if dsid not in set(ordered_ids)]
+            for dataset_id in ordered_ids + sorted(remaining_ids):
+                items = grouped.get(dataset_id, [])
+                if not items:
+                    continue
+                group_label = escape(dataset_label_by_id.get(dataset_id, dataset_id))
+                preset_lines.append(f'<optgroup label="{group_label}">')
+                for preset in items:
+                    pid = escape(str(preset.get("id", "")), quote=True)
+                    label = escape(str(preset.get("label", preset.get("id", ""))))
+                    min_block = int(preset.get("min_block", 0))
+                    max_block = int(preset.get("max_block", 0))
+                    block_label = f"{min_block:,}-{max_block:,}"
+                    preset_lines.append(f'<option value="{pid}">{label} [{block_label}]</option>')
+                preset_lines.append("</optgroup>")
+            preset_options_html = "\n".join(preset_lines)
+            preset_html = f"""
+          <label>Representative range
+            <select id=\"rangePreset\">
+              {preset_options_html}
+            </select>
+          </label>
+"""
+
+        range_selector_html = f"""
+        <div class=\"controls\">
+          {dataset_html}
+          {preset_html}
         </div>
 """
 
@@ -3135,6 +3386,7 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
     }
     manifest_json = json.dumps(manifest, separators=(",", ":"))
     initial_json = json.dumps(initial_dataset_id)
+    range_presets_json = json.dumps(range_presets, separators=(",", ":"))
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -3768,6 +4020,7 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
   <script>
     window.__feeDatasetManifest = {manifest_json};
     window.__feeInitialDatasetId = {initial_json};
+    window.__feeRangePresets = {range_presets_json};
   </script>
   <script src=\"./uPlot.iife.min.js\"></script>
   <script src=\"./{js_filename}\"></script>
@@ -3779,6 +4032,37 @@ def build_html(title, js_filename, dataset_options=None, initial_dataset_id=None
 def sanitize_dataset_id(dataset_id: str):
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", dataset_id.strip())
     return cleaned or "dataset"
+
+
+def parse_range_option(raw: str):
+    parts = raw.split("|", 4)
+    if len(parts) != 5:
+        raise ValueError(
+            "Invalid --range-option value. Expected '<id>|<label>|<dataset_id>|<min_block>|<max_block>'."
+        )
+    preset_id = parts[0].strip()
+    label = parts[1].strip()
+    dataset_id = parts[2].strip()
+    if not preset_id or not label or not dataset_id:
+        raise ValueError(
+            "Invalid --range-option value. id, label, and dataset_id must be non-empty."
+        )
+    try:
+        min_block = int(parts[3].strip())
+        max_block = int(parts[4].strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid --range-option value '{raw}'. min_block and max_block must be integers."
+        ) from exc
+    if min_block > max_block:
+        min_block, max_block = max_block, min_block
+    return {
+        "id": preset_id,
+        "label": label,
+        "dataset_id": dataset_id,
+        "min_block": min_block,
+        "max_block": max_block,
+    }
 
 
 def build_dataset_payload_js(dataset_id, blocks, base, blob, time_anchor):
@@ -3838,7 +4122,10 @@ def main():
         "--range-option",
         action="append",
         default=[],
-        help=argparse.SUPPRESS,
+        help=(
+            "Add/override representative range preset in the UI. "
+            "Format: '<id>|<label>|<dataset_id>|<min_block>|<max_block>'"
+        ),
     )
     args = parser.parse_args()
 
@@ -3886,6 +4173,7 @@ def main():
     ids = [spec["id"] for spec in dataset_specs]
     if len(set(ids)) != len(ids):
         parser.error("Duplicate dataset ids are not allowed.")
+    dataset_id_set = set(ids)
 
     initial_dataset_id = args.initial_dataset.strip() if args.initial_dataset else None
     if initial_dataset_id and initial_dataset_id not in set(ids):
@@ -3894,6 +4182,28 @@ def main():
         )
     if not initial_dataset_id:
         initial_dataset_id = dataset_specs[0]["id"]
+
+    range_presets = []
+    for item in DEFAULT_RANGE_PRESETS:
+        if item["dataset_id"] in dataset_id_set:
+            range_presets.append(dict(item))
+
+    preset_index = {preset["id"]: i for i, preset in enumerate(range_presets)}
+    for raw in args.range_option:
+        try:
+            parsed = parse_range_option(raw)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if parsed["dataset_id"] not in dataset_id_set:
+            parser.error(
+                f"--range-option dataset_id '{parsed['dataset_id']}' does not match any loaded dataset id: "
+                + ", ".join(ids)
+            )
+        if parsed["id"] in preset_index:
+            range_presets[preset_index[parsed["id"]]] = parsed
+        else:
+            preset_index[parsed["id"]] = len(range_presets)
+            range_presets.append(parsed)
 
     dataset_options = []
     written_payloads = []
@@ -3926,7 +4236,15 @@ def main():
     save_timestamp_cache(cache_path, ts_cache)
 
     out_js.write_text(build_app_js())
-    out_html.write_text(build_html(args.title, out_js.name, dataset_options, initial_dataset_id))
+    out_html.write_text(
+        build_html(
+            args.title,
+            out_js.name,
+            dataset_options,
+            initial_dataset_id,
+            range_presets=range_presets,
+        )
+    )
 
     print(out_html)
     print(out_js)

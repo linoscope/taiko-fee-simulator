@@ -24,6 +24,25 @@
   for (const meta of DATASET_MANIFEST) {
     if (meta && meta.id) DATASET_BY_ID[String(meta.id)] = meta;
   }
+  const RANGE_PRESETS = (window.__feeRangePresets && Array.isArray(window.__feeRangePresets))
+    ? window.__feeRangePresets.slice()
+    : [];
+  const RANGE_PRESET_BY_ID = Object.create(null);
+  for (const item of RANGE_PRESETS) {
+    if (!item || item.id == null) continue;
+    const id = String(item.id);
+    const datasetId = item.dataset_id == null ? '' : String(item.dataset_id);
+    const minBlock = Number(item.min_block);
+    const maxBlock = Number(item.max_block);
+    if (!datasetId || !Number.isFinite(minBlock) || !Number.isFinite(maxBlock)) continue;
+    RANGE_PRESET_BY_ID[id] = {
+      id,
+      label: item.label == null ? id : String(item.label),
+      dataset_id: datasetId,
+      min_block: Math.floor(Math.min(minBlock, maxBlock)),
+      max_block: Math.floor(Math.max(minBlock, maxBlock)),
+    };
+  }
 
   let activeDatasetId = null;
   let blocks = [];
@@ -48,6 +67,7 @@
   const busySpinner = document.getElementById('busySpinner');
   const busyOverlay = document.getElementById('busyOverlay');
   const datasetRangeInput = document.getElementById('datasetRange');
+  const rangePresetInput = document.getElementById('rangePreset');
   const paramsCard = document.getElementById('paramsCard');
   const paramsDirtyHint = document.getElementById('paramsDirtyHint');
 
@@ -239,6 +259,18 @@
     }, 0);
   }
 
+  function runAsyncUiTask(statusMsg, task) {
+    if (statusMsg) setStatus(statusMsg);
+    setUiBusy(true);
+    window.setTimeout(async function () {
+      try {
+        await task();
+      } finally {
+        setUiBusy(false);
+      }
+    }, 0);
+  }
+
   function setStatus(msg) {
     status.textContent = msg || '';
   }
@@ -305,6 +337,86 @@
       const id = meta && meta.id ? String(meta.id) : '';
       return `<option value="${id}">${label}</option>`;
     }).join('');
+  }
+
+  function getRangePresetMeta(presetId) {
+    if (!presetId) return null;
+    return RANGE_PRESET_BY_ID[String(presetId)] || null;
+  }
+
+  function setRangePresetOptions() {
+    if (!rangePresetInput) return;
+
+    const grouped = Object.create(null);
+    for (const item of RANGE_PRESETS) {
+      const preset = getRangePresetMeta(item && item.id);
+      if (!preset) continue;
+      if (!getDatasetMeta(preset.dataset_id)) continue;
+      const key = preset.dataset_id;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(preset);
+    }
+
+    const datasetOrder = DATASET_MANIFEST
+      .map(function (meta) { return meta && meta.id ? String(meta.id) : ''; })
+      .filter(Boolean);
+
+    const fragments = ['<option value="">Custom / manual range</option>'];
+    for (const datasetId of datasetOrder) {
+      const presets = grouped[datasetId];
+      if (!presets || !presets.length) continue;
+      const meta = getDatasetMeta(datasetId);
+      const groupLabel = htmlEscape((meta && meta.label) ? String(meta.label) : datasetId);
+      fragments.push(`<optgroup label="${groupLabel}">`);
+      for (const preset of presets) {
+        const blocks = `${preset.min_block.toLocaleString()}-${preset.max_block.toLocaleString()}`;
+        fragments.push(
+          `<option value="${htmlEscape(preset.id)}">${htmlEscape(preset.label)} [${blocks}]</option>`
+        );
+      }
+      fragments.push('</optgroup>');
+    }
+    rangePresetInput.innerHTML = fragments.join('');
+    rangePresetInput.disabled = fragments.length <= 1;
+    rangePresetInput.value = '';
+  }
+
+  function refreshRangePresetSelection() {
+    if (!rangePresetInput) return;
+    if (!activeDatasetId || !datasetReady) {
+      rangePresetInput.value = '';
+      return;
+    }
+    const curMin = Number(minInput.value);
+    const curMax = Number(maxInput.value);
+    if (!Number.isFinite(curMin) || !Number.isFinite(curMax)) {
+      rangePresetInput.value = '';
+      return;
+    }
+    const minB = Math.trunc(Math.min(curMin, curMax));
+    const maxB = Math.trunc(Math.max(curMin, curMax));
+    for (const item of RANGE_PRESETS) {
+      const preset = getRangePresetMeta(item && item.id);
+      if (!preset) continue;
+      if (preset.dataset_id === activeDatasetId && preset.min_block === minB && preset.max_block === maxB) {
+        rangePresetInput.value = preset.id;
+        return;
+      }
+    }
+    rangePresetInput.value = '';
+  }
+
+  async function applyRangePresetById(presetId) {
+    const preset = getRangePresetMeta(presetId);
+    if (!preset) return;
+
+    if (preset.dataset_id !== activeDatasetId) {
+      await activateDataset(preset.dataset_id, false);
+    }
+
+    applyRange(preset.min_block, preset.max_block, null);
+    if (rangePresetInput) rangePresetInput.value = preset.id;
+    setStatus(`Applied representative range: ${preset.label}`);
   }
 
   function ensureDatasetLoaded(datasetId) {
@@ -591,6 +703,15 @@
       sum += w * values[i];
     }
     return sumW > 0 ? (sum / sumW) : 0;
+  }
+
+  function htmlEscape(raw) {
+    return String(raw)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function getModeFlags(mode) {
@@ -2440,6 +2561,7 @@
     syncing = false;
     if (rangeChanged) resetSweepState('range changed');
     markScoreStale('range changed');
+    refreshRangePresetSelection();
   }
 
   function resizePlots() {
@@ -2821,8 +2943,19 @@
     });
   }
 
+  if (rangePresetInput) {
+    rangePresetInput.addEventListener('change', function () {
+      const presetId = rangePresetInput.value ? String(rangePresetInput.value) : '';
+      if (!presetId) return;
+      runAsyncUiTask('Applying representative range...', async function () {
+        await applyRangePresetById(presetId);
+      });
+    });
+  }
+
   async function initDatasets() {
     setDatasetRangeOptions();
+    setRangePresetOptions();
     const initialId = resolveInitialDatasetId();
     if (!initialId) {
       setStatus('No dataset configured. Regenerate with --dataset entries.');

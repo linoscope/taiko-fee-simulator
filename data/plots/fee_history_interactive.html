@@ -335,6 +335,7 @@
       <aside class="panel sidebar">
         
         <div class="controls">
+          
           <label>Data range
             <select id="datasetRange">
               <option value="current365" selected>Current 365d (2025-02 to 2026-02)</option>
@@ -342,6 +343,29 @@
 <option value="year2021">Year 2021</option>
             </select>
           </label>
+
+          
+          <label>Representative range
+            <select id="rangePreset">
+              <option value="">Custom / manual range</option>
+<optgroup label="Current 365d (2025-02 to 2026-02)">
+<option value="stable_nonzero">Stable low-fee nonzero period (current365) [22,951,899-23,011,898]</option>
+<option value="base_spike_current_oct_heavy">Base spike heavy (current365, Oct 2025) [23,516,899-23,576,898]</option>
+<option value="base_spike_current_oct_moderate">Base spike moderate (current365, early Oct 2025) [23,451,899-23,511,898]</option>
+<option value="blob_shift_up_plateau">Blob fee shift-up then plateau (current365) [22,291,899-22,351,898]</option>
+</optgroup>
+<optgroup label="Prior 365d (2024-02 to 2025-02)">
+<option value="blob_spike_heavy">Blob spike heavy (prior365) [20,113,898-20,173,897]</option>
+<option value="sustained_blob_high">Sustained high blob fee (prior365) [19,523,898-19,583,897]</option>
+</optgroup>
+<optgroup label="Year 2021">
+<option value="base_spike_heavy">Base spike heavy (year2021) [13,180,019-13,240,018]</option>
+<option value="sustained_base_high">Sustained high base fee (year2021) [13,500,019-13,560,018]</option>
+<option value="base_shift_up_plateau">Base fee shift-up then plateau (year2021) [13,465,019-13,525,018]</option>
+</optgroup>
+            </select>
+          </label>
+
         </div>
 
         <div class="controls">
@@ -640,6 +664,7 @@
   <script>
     window.__feeDatasetManifest = {"datasets":[{"id":"current365","label":"Current 365d (2025-02 to 2026-02)","data_js":"fee_history_interactive_app_data_current365.js"},{"id":"prior365","label":"Prior 365d (2024-02 to 2025-02)","data_js":"fee_history_interactive_app_data_prior365.js"},{"id":"year2021","label":"Year 2021","data_js":"fee_history_interactive_app_data_year2021.js"}]};
     window.__feeInitialDatasetId = "current365";
+    window.__feeRangePresets = [{"id":"base_spike_heavy","label":"Base spike heavy (year2021)","dataset_id":"year2021","min_block":13180019,"max_block":13240018},{"id":"blob_spike_heavy","label":"Blob spike heavy (prior365)","dataset_id":"prior365","min_block":20113898,"max_block":20173897},{"id":"sustained_base_high","label":"Sustained high base fee (year2021)","dataset_id":"year2021","min_block":13500019,"max_block":13560018},{"id":"sustained_blob_high","label":"Sustained high blob fee (prior365)","dataset_id":"prior365","min_block":19523898,"max_block":19583897},{"id":"stable_nonzero","label":"Stable low-fee nonzero period (current365)","dataset_id":"current365","min_block":22951899,"max_block":23011898},{"id":"base_spike_current_oct_heavy","label":"Base spike heavy (current365, Oct 2025)","dataset_id":"current365","min_block":23516899,"max_block":23576898},{"id":"base_spike_current_oct_moderate","label":"Base spike moderate (current365, early Oct 2025)","dataset_id":"current365","min_block":23451899,"max_block":23511898},{"id":"base_shift_up_plateau","label":"Base fee shift-up then plateau (year2021)","dataset_id":"year2021","min_block":13465019,"max_block":13525018},{"id":"blob_shift_up_plateau","label":"Blob fee shift-up then plateau (current365)","dataset_id":"current365","min_block":22291899,"max_block":22351898}];
   </script>
   <script src="./uPlot.iife.min.js"></script>
   <script src="./fee_history_interactive_app.js"></script>
