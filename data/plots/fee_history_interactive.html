@@ -74,6 +74,9 @@
     .mechanism-group.hidden {
       display: none;
     }
+    .hidden {
+      display: none !important;
+    }
     .mechanism-group-title {
       width: 100%;
       font-size: 12px;
@@ -338,8 +341,8 @@
           
           <label>Data range
             <select id="datasetRange">
-              <option value="current365" selected>Current 365d (2025-02 to 2026-02)</option>
-<option value="prior365">Prior 365d (2024-02 to 2025-02)</option>
+              <option value="current365" selected>Current 365d</option>
+<option value="prior365">Prior 365d</option>
 <option value="year2021">Year 2021</option>
             </select>
           </label>
@@ -348,13 +351,13 @@
           <label>Representative range
             <select id="rangePreset">
               <option value="">Custom / manual range</option>
-<optgroup label="Current 365d (2025-02 to 2026-02)">
+<optgroup label="Current 365d">
 <option value="stable_nonzero">Stable low-fee nonzero period (current365) [22,951,899-23,011,898]</option>
 <option value="base_spike_current_oct_heavy">Base spike heavy (current365, Oct 2025) [23,516,899-23,576,898]</option>
 <option value="base_spike_current_oct_moderate">Base spike moderate (current365, early Oct 2025) [23,451,899-23,511,898]</option>
 <option value="blob_shift_up_plateau">Blob fee shift-up then plateau (current365) [22,291,899-22,351,898]</option>
 </optgroup>
-<optgroup label="Prior 365d (2024-02 to 2025-02)">
+<optgroup label="Prior 365d">
 <option value="blob_spike_heavy">Blob spike heavy (prior365) [20,113,898-20,173,897]</option>
 <option value="sustained_blob_high">Sustained high blob fee (prior365) [19,523,898-19,583,897]</option>
 </optgroup>
@@ -423,7 +426,25 @@
           <div class="assumptions-title">L1 posting cost assumptions</div>
           <div class="controls">
             <label>L1 gas used <input id="l1GasUsed" type="number" min="0" step="1000" value="100000" /></label>
-            <label>Blobs <input id="numBlobs" type="number" min="0" step="1" value="2" /></label>
+            <label>Blob model
+              <select id="blobMode">
+                <option value="fixed" selected>fixed</option>
+                <option value="dynamic">dynamic (tx/bytes based)</option>
+              </select>
+            </label>
+            <label id="blobFixedLabel">Fixed blobs <input id="numBlobs" type="number" min="0" step="1" value="2" /></label>
+            <label id="blobEstimateLabel" class="hidden">Estimated blobs / proposal (dynamic)
+              <input id="numBlobsEstimated" type="text" value="-" readonly />
+            </label>
+            <div id="blobDynamicGroup" class="mechanism-group hidden">
+              <div class="mechanism-group-title">Dynamic blob model params</div>
+              <label>Tx gas <input id="txGas" type="number" min="1" step="1000" value="70000" /></label>
+              <label>Tx bytes <input id="txBytes" type="number" min="0" step="1" value="120" /></label>
+              <label>Batch overhead bytes <input id="batchOverheadBytes" type="number" min="0" step="10" value="1200" /></label>
+              <label>Compression ratio <input id="compressionRatio" type="number" min="0.01" step="0.01" value="1" /></label>
+              <label>Blob utilization <input id="blobUtilization" type="number" min="0.01" max="1" step="0.01" value="0.95" /></label>
+              <label>Min blobs / proposal <input id="minBlobsPerProposal" type="number" min="0" step="0.1" value="1" /></label>
+            </div>
             <label>Priority fee (gwei) <input id="priorityFeeGwei" type="number" min="0" step="0.01" value="1" /></label>
           </div>
         </div>
@@ -615,14 +636,16 @@
         <button id="controllerHelpClose" class="help-close" type="button" title="Close">x</button>
       </div>
       <div class="help-body">
-        <p><strong>Posting cost:</strong> <code>cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</code></p>
+        <p><strong>Posting cost:</strong> <code>cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs_t_post * 131072 * blobBaseFee_t_post</code></p>
         <p><strong>Feedforward term:</strong> <code>FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</code></p>
         <p><strong>Derivative filter:</strong> <code>de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</code></p>
         <p><strong>Feedback state:</strong> <code>D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</code></p>
         <p><strong>Fee law:</strong> <code>P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</code></p>
         <p><strong>Arbitrum-style surplus pricer:</strong> <code>surplus_t = vault_t - targetVault; desired'_t = -surplus_t / equilUnits; actual'_t = (surplus_t - surplus_(t-1)) / unitsAllocated; price_(t+1) = max(0, price_t + (desired'_t - actual'_t) * unitsAllocated / (equilUnits / inertia + unitsAllocated)); fee_t = clamp(price_t, minFee, maxFee)</code></p>
         <ul>
-          <li><code>auto alpha</code> uses base throughput: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</code></li>
+          <li><code>blob model = fixed</code>: <code>numBlobs_t = fixedBlobs</code></li>
+          <li><code>blob model = dynamic</code>: <code>numBlobs_t = max(minBlobs, ceil((batchOverhead + (l2GasPerProposal_t / txGas) * txBytes) / (compressionRatio * 131072 * blobUtilization)))</code></li>
+          <li><code>auto alpha</code> uses base throughput and selected blob model: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs_base * 131072) / l2GasPerProposal_base</code></li>
           <li>Assumes L1 block time = 12s; demand multipliers are <code>low=0.7x</code>, <code>base=1.0x</code>, <code>high=1.4x</code></li>
           <li>L2 gas scenarios are mean-neutralized around demand-adjusted throughput target</li>
           <li>Posting happens when <code>(i + 1) % postEveryBlocks == 0</code>; revenue settles to vault at post time</li>
@@ -662,7 +685,7 @@
   </div>
 
   <script>
-    window.__feeDatasetManifest = {"datasets":[{"id":"current365","label":"Current 365d (2025-02 to 2026-02)","data_js":"fee_history_interactive_app_data_current365.js"},{"id":"prior365","label":"Prior 365d (2024-02 to 2025-02)","data_js":"fee_history_interactive_app_data_prior365.js"},{"id":"year2021","label":"Year 2021","data_js":"fee_history_interactive_app_data_year2021.js"}]};
+    window.__feeDatasetManifest = {"datasets":[{"id":"current365","label":"Current 365d","data_js":"fee_history_interactive_app_data_current365.js"},{"id":"prior365","label":"Prior 365d","data_js":"fee_history_interactive_app_data_prior365.js"},{"id":"year2021","label":"Year 2021","data_js":"fee_history_interactive_app_data_year2021.js"}]};
     window.__feeInitialDatasetId = "current365";
     window.__feeRangePresets = [{"id":"base_spike_heavy","label":"Base spike heavy (year2021)","dataset_id":"year2021","min_block":13180019,"max_block":13240018},{"id":"blob_spike_heavy","label":"Blob spike heavy (prior365)","dataset_id":"prior365","min_block":20113898,"max_block":20173897},{"id":"sustained_base_high","label":"Sustained high base fee (year2021)","dataset_id":"year2021","min_block":13500019,"max_block":13560018},{"id":"sustained_blob_high","label":"Sustained high blob fee (prior365)","dataset_id":"prior365","min_block":19523898,"max_block":19583897},{"id":"stable_nonzero","label":"Stable low-fee nonzero period (current365)","dataset_id":"current365","min_block":22951899,"max_block":23011898},{"id":"base_spike_current_oct_heavy","label":"Base spike heavy (current365, Oct 2025)","dataset_id":"current365","min_block":23516899,"max_block":23576898},{"id":"base_spike_current_oct_moderate","label":"Base spike moderate (current365, early Oct 2025)","dataset_id":"current365","min_block":23451899,"max_block":23511898},{"id":"base_shift_up_plateau","label":"Base fee shift-up then plateau (year2021)","dataset_id":"year2021","min_block":13465019,"max_block":13525018},{"id":"blob_shift_up_plateau","label":"Blob fee shift-up then plateau (current365)","dataset_id":"current365","min_block":22291899,"max_block":22351898}];
   </script>

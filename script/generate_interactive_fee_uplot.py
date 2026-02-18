@@ -19,6 +19,13 @@ DEFAULT_L2_GAS_PER_L2_BLOCK = 1_000_000
 DEFAULT_L2_BLOCK_TIME_SECONDS = 2
 DEFAULT_L1_GAS_USED = 100_000
 DEFAULT_NUM_BLOBS = 2
+DEFAULT_BLOB_MODE = "fixed"
+DEFAULT_TX_GAS = ERC20_TRANSFER_GAS
+DEFAULT_TX_BYTES = 120.0
+DEFAULT_BATCH_OVERHEAD_BYTES = 1_200.0
+DEFAULT_COMPRESSION_RATIO = 1.0
+DEFAULT_BLOB_UTILIZATION = 0.95
+DEFAULT_MIN_BLOBS_PER_PROPOSAL = 1.0
 DEFAULT_PRIORITY_FEE_GWEI = 1.0
 DEFAULT_MIN_FEE_GWEI = 0.0
 DEFAULT_MAX_FEE_GWEI = 1.0
@@ -60,6 +67,7 @@ DEFAULT_SWEEP_KI_VALUES = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]
 DEFAULT_SWEEP_KD_VALUES = [0.0]
 DEFAULT_SWEEP_I_MAX_VALUES = [5.0, 10.0, 100.0]
 DEFAULT_SWEEP_MAX_BLOCKS = 200_000
+DEFAULT_MAX_DATA_POINTS = 160_000
 DEFAULT_RANGE_PRESETS = [
     {
         "id": "base_spike_heavy",
@@ -327,6 +335,13 @@ def build_app_js():
   const ERC20_TRANSFER_GAS = {ERC20_TRANSFER_GAS};
   const L1_BLOCK_TIME_SECONDS = {L1_BLOCK_TIME_SECONDS};
   const DEFAULT_FEE_MECHANISM = {json.dumps(DEFAULT_FEE_MECHANISM)};
+  const DEFAULT_BLOB_MODE = {json.dumps(DEFAULT_BLOB_MODE)};
+  const DEFAULT_TX_GAS = {DEFAULT_TX_GAS:.12f};
+  const DEFAULT_TX_BYTES = {DEFAULT_TX_BYTES:.12f};
+  const DEFAULT_BATCH_OVERHEAD_BYTES = {DEFAULT_BATCH_OVERHEAD_BYTES:.12f};
+  const DEFAULT_COMPRESSION_RATIO = {DEFAULT_COMPRESSION_RATIO:.12f};
+  const DEFAULT_BLOB_UTILIZATION = {DEFAULT_BLOB_UTILIZATION:.12f};
+  const DEFAULT_MIN_BLOBS_PER_PROPOSAL = {DEFAULT_MIN_BLOBS_PER_PROPOSAL:.12f};
   const DEFAULT_ALPHA_GAS = {DEFAULT_ALPHA_GAS:.12f};
   const DEFAULT_ALPHA_BLOB = {DEFAULT_ALPHA_BLOB:.12f};
   const DEFAULT_ARB_INITIAL_PRICE_GWEI = {DEFAULT_ARB_INITIAL_PRICE_GWEI:.12f};
@@ -402,7 +417,18 @@ def build_app_js():
   const l2GasScenarioInput = document.getElementById('l2GasScenario');
   const l2DemandRegimeInput = document.getElementById('l2DemandRegime');
   const l1GasUsedInput = document.getElementById('l1GasUsed');
+  const blobModeInput = document.getElementById('blobMode');
+  const blobFixedLabel = document.getElementById('blobFixedLabel');
+  const blobEstimateLabel = document.getElementById('blobEstimateLabel');
+  const numBlobsEstimatedInput = document.getElementById('numBlobsEstimated');
+  const blobDynamicGroup = document.getElementById('blobDynamicGroup');
   const numBlobsInput = document.getElementById('numBlobs');
+  const txGasInput = document.getElementById('txGas');
+  const txBytesInput = document.getElementById('txBytes');
+  const batchOverheadBytesInput = document.getElementById('batchOverheadBytes');
+  const compressionRatioInput = document.getElementById('compressionRatio');
+  const blobUtilizationInput = document.getElementById('blobUtilization');
+  const minBlobsPerProposalInput = document.getElementById('minBlobsPerProposal');
   const priorityFeeGweiInput = document.getElementById('priorityFeeGwei');
   const feeMechanismInput = document.getElementById('feeMechanism');
   const taikoParamsGroup = document.getElementById('taikoParamsGroup');
@@ -539,6 +565,7 @@ def build_app_js():
     paramsDirty = true;
     if (paramsCard) paramsCard.classList.add('stale');
     if (paramsDirtyHint) paramsDirtyHint.textContent = 'Stale: click Recompute derived charts';
+    updateBlobEstimatePreview();
     markScoreStale('parameter change pending recompute');
     markSweepStale('parameter change pending recompute');
     if (reason) setStatus(reason);
@@ -959,29 +986,29 @@ def build_app_js():
   }}
 
   function parsePositive(inputEl, fallback) {{
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     return Number.isFinite(v) && v >= 0 ? v : fallback;
   }}
 
   function parsePositiveInt(inputEl, fallback) {{
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     if (!Number.isFinite(v) || v < 1) return fallback;
     return Math.floor(v);
   }}
 
   function parseNonNegativeInt(inputEl, fallback) {{
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     if (!Number.isFinite(v) || v < 0) return fallback;
     return Math.floor(v);
   }}
 
   function parseNumber(inputEl, fallback) {{
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     return Number.isFinite(v) ? v : fallback;
   }}
 
   function parseWeight(inputEl, fallback) {{
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     return Number.isFinite(v) && v >= 0 ? v : fallback;
   }}
 
@@ -1065,6 +1092,75 @@ def build_app_js():
       mode === 'pdi+ff'
     );
     return {{ usesFeedforward, usesP, usesI, usesD }};
+  }}
+
+  function currentBlobMode() {{
+    if (!blobModeInput) return DEFAULT_BLOB_MODE;
+    return blobModeInput.value === 'dynamic' ? 'dynamic' : 'fixed';
+  }}
+
+  function parseBlobModelInputs() {{
+    const txGas = Math.max(1, parsePositive(txGasInput, DEFAULT_TX_GAS));
+    const txBytes = parsePositive(txBytesInput, DEFAULT_TX_BYTES);
+    const batchOverheadBytes = parsePositive(batchOverheadBytesInput, DEFAULT_BATCH_OVERHEAD_BYTES);
+    const compressionRatio = Math.max(1e-9, parsePositive(compressionRatioInput, DEFAULT_COMPRESSION_RATIO));
+    const blobUtilization = clampNum(
+      parsePositive(blobUtilizationInput, DEFAULT_BLOB_UTILIZATION),
+      1e-9,
+      1
+    );
+    const minBlobsPerProposal = parsePositive(
+      minBlobsPerProposalInput,
+      DEFAULT_MIN_BLOBS_PER_PROPOSAL
+    );
+    return {{
+      txGas,
+      txBytes,
+      batchOverheadBytes,
+      compressionRatio,
+      blobUtilization,
+      minBlobsPerProposal
+    }};
+  }}
+
+  function estimateDynamicBlobs(l2GasPerProposal, blobModel) {{
+    if (!(l2GasPerProposal > 0)) {{
+      return Math.max(0, blobModel.minBlobsPerProposal);
+    }}
+    const txGas = Math.max(1, blobModel.txGas);
+    const txBytes = Math.max(0, blobModel.txBytes);
+    const batchOverheadBytes = Math.max(0, blobModel.batchOverheadBytes);
+    const compressionRatio = Math.max(1e-9, blobModel.compressionRatio);
+    const blobUtilization = clampNum(blobModel.blobUtilization, 1e-9, 1);
+    const minBlobs = Math.max(0, blobModel.minBlobsPerProposal);
+
+    const txCount = l2GasPerProposal / txGas;
+    const uncompressedBytes = batchOverheadBytes + txCount * txBytes;
+    const compressedBytes = uncompressedBytes / compressionRatio;
+    const bytesPerBlob = BLOB_GAS_PER_BLOB * blobUtilization;
+    const blobs = compressedBytes > 0 ? Math.ceil(compressedBytes / bytesPerBlob) : 0;
+    return Math.max(minBlobs, blobs);
+  }}
+
+  function updateBlobEstimatePreview() {{
+    if (!numBlobsEstimatedInput) return;
+    if (currentBlobMode() !== 'dynamic') {{
+      numBlobsEstimatedInput.value = '-';
+      return;
+    }}
+
+    const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, {DEFAULT_POST_EVERY_BLOCKS});
+    const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
+    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, {DEFAULT_L2_BLOCK_TIME_SECONDS});
+    const l2DemandRegime = l2DemandRegimeInput ? (l2DemandRegimeInput.value || 'base') : 'base';
+    const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
+    const l2BlocksPerL1Block = l2BlockTimeSec > 0 ? (L1_BLOCK_TIME_SECONDS / l2BlockTimeSec) : 0;
+    const l2GasPerL1BlockBase = l2GasPerL2Block * l2BlocksPerL1Block;
+    const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
+    const l2GasPerProposal = l2GasPerL1BlockTarget * postEveryBlocks;
+    const blobModel = parseBlobModelInputs();
+    const estimated = estimateDynamicBlobs(l2GasPerProposal, blobModel);
+    numBlobsEstimatedInput.value = formatNum(estimated, 2);
   }}
 
   function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {{
@@ -1278,6 +1374,19 @@ def build_app_js():
     if (!autoAlphaEnabled) ensureFeedforwardDefaults();
   }}
 
+  function syncBlobModeUi() {{
+    const mode = currentBlobMode();
+    const dynamic = mode === 'dynamic';
+    if (blobFixedLabel) blobFixedLabel.classList.toggle('hidden', dynamic);
+    if (blobEstimateLabel) blobEstimateLabel.classList.toggle('hidden', !dynamic);
+    if (blobDynamicGroup) blobDynamicGroup.classList.toggle('hidden', !dynamic);
+    if (numBlobsInput) {{
+      numBlobsInput.disabled = dynamic;
+      numBlobsInput.title = dynamic ? 'Disabled when Blob model = dynamic' : '';
+    }}
+    updateBlobEstimatePreview();
+  }}
+
   function currentFeeMechanism() {{
     if (!feeMechanismInput) return DEFAULT_FEE_MECHANISM;
     return feeMechanismInput.value === 'arbitrum' ? 'arbitrum' : 'taiko';
@@ -1396,6 +1505,7 @@ def build_app_js():
     }} else {{
       l2TpsInput.value = 'custom';
     }}
+    updateBlobEstimatePreview();
   }}
 
   function syncL2GasFromTps() {{
@@ -1409,6 +1519,7 @@ def build_app_js():
     const gasPerL2Block = Math.max(0, tps * l2BlockTimeSec * ERC20_TRANSFER_GAS);
     l2GasPerL2BlockInput.value = String(Math.round(gasPerL2Block));
     setCustomTpsLabel(tps);
+    updateBlobEstimatePreview();
     return true;
   }}
 
@@ -1608,6 +1719,7 @@ def build_app_js():
     const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
     const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
     syncTpsFromL2Gas();
+    updateBlobEstimatePreview();
     const l2GasScenario = l2GasScenarioInput.value || 'constant';
     const l2DemandRegime = l2DemandRegimeInput.value || 'base';
     const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
@@ -1615,7 +1727,9 @@ def build_app_js():
     const l2GasPerL1BlockBase = l2GasPerL2Block * l2BlocksPerL1Block;
     const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
-    const numBlobs = parsePositive(numBlobsInput, 0);
+    const blobMode = currentBlobMode();
+    const fixedNumBlobs = parsePositive(numBlobsInput, 0);
+    const blobModel = parseBlobModelInputs();
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
     const feeMechanism = currentFeeMechanism();
     const controllerMode = controllerModeInput.value || 'ff';
@@ -1641,8 +1755,12 @@ def build_app_js():
     const l2GasPerProposalBase = l2GasPerL1BlockBase * postEveryBlocks;
     const autoAlphaEnabled = autoAlphaInput.checked;
     const autoAlphaGas = l2GasPerProposalBase > 0 ? (l1GasUsed / l2GasPerProposalBase) : 0;
+    let expectedBlobsBase = fixedNumBlobs;
+    if (blobMode === 'dynamic') {{
+      expectedBlobsBase = estimateDynamicBlobs(l2GasPerProposalBase, blobModel);
+    }}
     const autoAlphaBlob =
-      l2GasPerProposalBase > 0 ? ((numBlobs * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
+      l2GasPerProposalBase > 0 ? ((expectedBlobsBase * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
     if (feeMechanism === 'taiko') {{
       if (autoAlphaEnabled) {{
         alphaGasInput.value = autoAlphaGas.toFixed(6);
@@ -1728,11 +1846,14 @@ def build_app_js():
       const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
       const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
 
-      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
-      const blobCostWei = numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
-      const totalCostWei = gasCostWei + blobCostWei;
       const l2GasPerL1Block_i = derivedL2GasPerL1Block[i];
       const l2GasPerProposal_i = l2GasPerL1Block_i * postEveryBlocks;
+      const numBlobs_i = blobMode === 'dynamic'
+        ? estimateDynamicBlobs(l2GasPerProposal_i, blobModel)
+        : fixedNumBlobs;
+      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
+      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
+      const totalCostWei = gasCostWei + blobCostWei;
 
       derivedGasCostEth[i] = gasCostWei / 1e18;
       derivedBlobCostEth[i] = blobCostWei / 1e18;
@@ -1931,7 +2052,14 @@ def build_app_js():
         const sweepSimCfg = {{
           postEveryBlocks,
           l1GasUsed,
-          numBlobs,
+          blobMode,
+          fixedNumBlobs,
+          txGas: blobModel.txGas,
+          txBytes: blobModel.txBytes,
+          batchOverheadBytes: blobModel.batchOverheadBytes,
+          compressionRatio: blobModel.compressionRatio,
+          blobUtilization: blobModel.blobUtilization,
+          minBlobsPerProposal: blobModel.minBlobsPerProposal,
           priorityFeeWei,
           dffBlocks,
           dfbBlocks,
@@ -2016,8 +2144,12 @@ def build_app_js():
       const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
       const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
 
+      const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
+      const numBlobs_i = simCfg.blobMode === 'dynamic'
+        ? estimateDynamicBlobs(l2GasPerProposal_i, simCfg)
+        : simCfg.fixedNumBlobs;
       const gasCostWei = simCfg.l1GasUsed * (baseFeeWei + simCfg.priorityFeeWei);
-      const blobCostWei = simCfg.numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
+      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
       const totalCostWei = gasCostWei + blobCostWei;
 
       const fbLocal = local - simCfg.dfbBlocks;
@@ -2063,7 +2195,6 @@ def build_app_js():
       }}
       feePrev = chargedFeeGwei;
 
-      const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
       if (l2GasPerProposal_i > 0) {{
         const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
         breakEvenFeeSum += breakEvenFeeWeiPerL2Gas / 1e9;
@@ -2365,7 +2496,9 @@ def build_app_js():
 
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
-    const numBlobs = parsePositive(numBlobsInput, 0);
+    const blobMode = currentBlobMode();
+    const fixedNumBlobs = parsePositive(numBlobsInput, 0);
+    const blobModel = parseBlobModelInputs();
     const priorityFeeWei = parsePositive(priorityFeeGweiInput, 0) * 1e9;
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, {DEFAULT_D_FF_BLOCKS});
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, {DEFAULT_D_FB_BLOCKS});
@@ -2387,7 +2520,14 @@ def build_app_js():
     const simCfg = {{
       postEveryBlocks,
       l1GasUsed,
-      numBlobs,
+      blobMode,
+      fixedNumBlobs,
+      txGas: blobModel.txGas,
+      txBytes: blobModel.txBytes,
+      batchOverheadBytes: blobModel.batchOverheadBytes,
+      compressionRatio: blobModel.compressionRatio,
+      blobUtilization: blobModel.blobUtilization,
+      minBlobsPerProposal: blobModel.minBlobsPerProposal,
       priorityFeeWei,
       dffBlocks,
       dfbBlocks,
@@ -3140,6 +3280,13 @@ def build_app_js():
     markParamsStale('Auto alpha changed. Click Recompute derived charts.');
   }});
 
+  if (blobModeInput) {{
+    blobModeInput.addEventListener('change', function () {{
+      syncBlobModeUi();
+      markParamsStale('Blob model changed. Click Recompute derived charts.');
+    }});
+  }}
+
   if (l2TpsInput) {{
     l2TpsInput.addEventListener('change', function () {{
       if (syncL2GasFromTps()) {{
@@ -3193,7 +3340,14 @@ def build_app_js():
     l2GasScenarioInput,
     l2DemandRegimeInput,
     l1GasUsedInput,
+    blobModeInput,
     numBlobsInput,
+    txGasInput,
+    txBytesInput,
+    batchOverheadBytesInput,
+    compressionRatioInput,
+    blobUtilizationInput,
+    minBlobsPerProposalInput,
     priorityFeeGweiInput,
     alphaGasInput,
     alphaBlobInput,
@@ -3213,7 +3367,7 @@ def build_app_js():
     maxFeeGweiInput,
     initialVaultEthInput,
     targetVaultEthInput
-  ].forEach(function (el) {{
+  ].filter(Boolean).forEach(function (el) {{
     el.addEventListener('keydown', function (e) {{
       if (e.key === 'Enter') markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     }});
@@ -3295,6 +3449,7 @@ def build_app_js():
 
   markScoreStale('not computed yet');
   syncFeeMechanismUi();
+  syncBlobModeUi();
   initDatasets();
 }})();
 """
@@ -3463,6 +3618,9 @@ def build_html(
     }}
     .mechanism-group.hidden {{
       display: none;
+    }}
+    .hidden {{
+      display: none !important;
     }}
     .mechanism-group-title {{
       width: 100%;
@@ -3779,7 +3937,25 @@ def build_html(
           <div class=\"assumptions-title\">L1 posting cost assumptions</div>
           <div class=\"controls\">
             <label>L1 gas used <input id=\"l1GasUsed\" type=\"number\" min=\"0\" step=\"1000\" value=\"{DEFAULT_L1_GAS_USED}\" /></label>
-            <label>Blobs <input id=\"numBlobs\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_NUM_BLOBS}\" /></label>
+            <label>Blob model
+              <select id=\"blobMode\">
+                <option value=\"fixed\"{" selected" if DEFAULT_BLOB_MODE == "fixed" else ""}>fixed</option>
+                <option value=\"dynamic\"{" selected" if DEFAULT_BLOB_MODE == "dynamic" else ""}>dynamic (tx/bytes based)</option>
+              </select>
+            </label>
+            <label id=\"blobFixedLabel\">Fixed blobs <input id=\"numBlobs\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_NUM_BLOBS}\" /></label>
+            <label id=\"blobEstimateLabel\" class=\"hidden\">Estimated blobs / proposal (dynamic)
+              <input id=\"numBlobsEstimated\" type=\"text\" value=\"-\" readonly />
+            </label>
+            <div id=\"blobDynamicGroup\" class=\"mechanism-group hidden\">
+              <div class=\"mechanism-group-title\">Dynamic blob model params</div>
+              <label>Tx gas <input id=\"txGas\" type=\"number\" min=\"1\" step=\"1000\" value=\"{DEFAULT_TX_GAS:g}\" /></label>
+              <label>Tx bytes <input id=\"txBytes\" type=\"number\" min=\"0\" step=\"1\" value=\"{DEFAULT_TX_BYTES:g}\" /></label>
+              <label>Batch overhead bytes <input id=\"batchOverheadBytes\" type=\"number\" min=\"0\" step=\"10\" value=\"{DEFAULT_BATCH_OVERHEAD_BYTES:g}\" /></label>
+              <label>Compression ratio <input id=\"compressionRatio\" type=\"number\" min=\"0.01\" step=\"0.01\" value=\"{DEFAULT_COMPRESSION_RATIO:g}\" /></label>
+              <label>Blob utilization <input id=\"blobUtilization\" type=\"number\" min=\"0.01\" max=\"1\" step=\"0.01\" value=\"{DEFAULT_BLOB_UTILIZATION:g}\" /></label>
+              <label>Min blobs / proposal <input id=\"minBlobsPerProposal\" type=\"number\" min=\"0\" step=\"0.1\" value=\"{DEFAULT_MIN_BLOBS_PER_PROPOSAL:g}\" /></label>
+            </div>
             <label>Priority fee (gwei) <input id=\"priorityFeeGwei\" type=\"number\" min=\"0\" step=\"0.01\" value=\"{DEFAULT_PRIORITY_FEE_GWEI:g}\" /></label>
           </div>
         </div>
@@ -3971,14 +4147,16 @@ def build_html(
         <button id=\"controllerHelpClose\" class=\"help-close\" type=\"button\" title=\"Close\">x</button>
       </div>
       <div class=\"help-body\">
-        <p><strong>Posting cost:</strong> <code>cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs * 131072 * blobBaseFee_t_post</code></p>
+        <p><strong>Posting cost:</strong> <code>cost_wei(t_post) = l1GasUsed * (baseFee_t_post + priorityFee) + numBlobs_t_post * 131072 * blobBaseFee_t_post</code></p>
         <p><strong>Feedforward term:</strong> <code>FF_t = alpha_gas * (baseFee_(t-d_ff) + priorityFee) + alpha_blob * blobBaseFee_(t-d_ff)</code></p>
         <p><strong>Derivative filter:</strong> <code>de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</code></p>
         <p><strong>Feedback state:</strong> <code>D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</code></p>
         <p><strong>Fee law:</strong> <code>P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</code></p>
         <p><strong>Arbitrum-style surplus pricer:</strong> <code>surplus_t = vault_t - targetVault; desired'_t = -surplus_t / equilUnits; actual'_t = (surplus_t - surplus_(t-1)) / unitsAllocated; price_(t+1) = max(0, price_t + (desired'_t - actual'_t) * unitsAllocated / (equilUnits / inertia + unitsAllocated)); fee_t = clamp(price_t, minFee, maxFee)</code></p>
         <ul>
-          <li><code>auto alpha</code> uses base throughput: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs * 131072) / l2GasPerProposal_base</code></li>
+          <li><code>blob model = fixed</code>: <code>numBlobs_t = fixedBlobs</code></li>
+          <li><code>blob model = dynamic</code>: <code>numBlobs_t = max(minBlobs, ceil((batchOverhead + (l2GasPerProposal_t / txGas) * txBytes) / (compressionRatio * 131072 * blobUtilization)))</code></li>
+          <li><code>auto alpha</code> uses base throughput and selected blob model: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs_base * 131072) / l2GasPerProposal_base</code></li>
           <li>Assumes L1 block time = 12s; demand multipliers are <code>low=0.7x</code>, <code>base=1.0x</code>, <code>high=1.4x</code></li>
           <li>L2 gas scenarios are mean-neutralized around demand-adjusted throughput target</li>
           <li>Posting happens when <code>(i + 1) % postEveryBlocks == 0</code>; revenue settles to vault at post time</li>
@@ -4083,6 +4261,25 @@ def build_dataset_payload_js(dataset_id, blocks, base, blob, time_anchor):
 """
 
 
+def downsample_series(blocks, base, blob, max_points: int):
+    n = len(blocks)
+    if max_points <= 0 or n <= max_points:
+        return blocks, base, blob, 1
+
+    # Uniform stride downsampling with endpoint preservation.
+    step = max(1, (n - 1) // max_points + 1)
+    idxs = list(range(0, n, step))
+    if idxs[-1] != n - 1:
+        idxs.append(n - 1)
+
+    return (
+        [blocks[i] for i in idxs],
+        [base[i] for i in idxs],
+        [blob[i] for i in idxs],
+        step,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate interactive uPlot HTML for fee history")
     parser.add_argument(
@@ -4103,6 +4300,15 @@ def main():
     parser.add_argument("--out-html", required=True, help="Output HTML path")
     parser.add_argument("--out-js", required=True, help="Output app JS path")
     parser.add_argument("--title", default="Ethereum + L2 Posting Cost Explorer", help="Page title")
+    parser.add_argument(
+        "--max-points",
+        type=int,
+        default=DEFAULT_MAX_DATA_POINTS,
+        help=(
+            "Maximum points per dataset payload for browser rendering/simulation. "
+            "Use 0 to disable downsampling."
+        ),
+    )
     parser.add_argument(
         "--rpc",
         default="https://ethereum-rpc.publicnode.com",
@@ -4211,6 +4417,10 @@ def main():
     for spec in dataset_specs:
         blocks, base, blob = read_fee_csv(spec["csv_path"])
         time_anchor = read_time_anchor(spec["csv_path"], blocks[0], blocks[-1], rpc_url, ts_cache)
+        raw_points = len(blocks)
+        blocks, base, blob, sample_step = downsample_series(
+            blocks, base, blob, max(args.max_points, 0)
+        )
 
         safe_id = sanitize_dataset_id(spec["id"])
         payload_name = f"{out_js.stem}_data_{safe_id}.js"
@@ -4230,6 +4440,9 @@ def main():
                 "id": spec["id"],
                 "label": spec["label"],
                 "data_js": payload_name,
+                "raw_points": raw_points,
+                "sampled_points": len(blocks),
+                "sample_step": sample_step,
             }
         )
 

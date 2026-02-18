@@ -3,6 +3,13 @@
   const ERC20_TRANSFER_GAS = 70000;
   const L1_BLOCK_TIME_SECONDS = 12;
   const DEFAULT_FEE_MECHANISM = "taiko";
+  const DEFAULT_BLOB_MODE = "fixed";
+  const DEFAULT_TX_GAS = 70000.000000000000;
+  const DEFAULT_TX_BYTES = 120.000000000000;
+  const DEFAULT_BATCH_OVERHEAD_BYTES = 1200.000000000000;
+  const DEFAULT_COMPRESSION_RATIO = 1.000000000000;
+  const DEFAULT_BLOB_UTILIZATION = 0.950000000000;
+  const DEFAULT_MIN_BLOBS_PER_PROPOSAL = 1.000000000000;
   const DEFAULT_ALPHA_GAS = 0.001666666667;
   const DEFAULT_ALPHA_BLOB = 0.004369066667;
   const DEFAULT_ARB_INITIAL_PRICE_GWEI = 0.001000000000;
@@ -78,7 +85,18 @@
   const l2GasScenarioInput = document.getElementById('l2GasScenario');
   const l2DemandRegimeInput = document.getElementById('l2DemandRegime');
   const l1GasUsedInput = document.getElementById('l1GasUsed');
+  const blobModeInput = document.getElementById('blobMode');
+  const blobFixedLabel = document.getElementById('blobFixedLabel');
+  const blobEstimateLabel = document.getElementById('blobEstimateLabel');
+  const numBlobsEstimatedInput = document.getElementById('numBlobsEstimated');
+  const blobDynamicGroup = document.getElementById('blobDynamicGroup');
   const numBlobsInput = document.getElementById('numBlobs');
+  const txGasInput = document.getElementById('txGas');
+  const txBytesInput = document.getElementById('txBytes');
+  const batchOverheadBytesInput = document.getElementById('batchOverheadBytes');
+  const compressionRatioInput = document.getElementById('compressionRatio');
+  const blobUtilizationInput = document.getElementById('blobUtilization');
+  const minBlobsPerProposalInput = document.getElementById('minBlobsPerProposal');
   const priorityFeeGweiInput = document.getElementById('priorityFeeGwei');
   const feeMechanismInput = document.getElementById('feeMechanism');
   const taikoParamsGroup = document.getElementById('taikoParamsGroup');
@@ -215,6 +233,7 @@
     paramsDirty = true;
     if (paramsCard) paramsCard.classList.add('stale');
     if (paramsDirtyHint) paramsDirtyHint.textContent = 'Stale: click Recompute derived charts';
+    updateBlobEstimatePreview();
     markScoreStale('parameter change pending recompute');
     markSweepStale('parameter change pending recompute');
     if (reason) setStatus(reason);
@@ -635,29 +654,29 @@
   }
 
   function parsePositive(inputEl, fallback) {
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     return Number.isFinite(v) && v >= 0 ? v : fallback;
   }
 
   function parsePositiveInt(inputEl, fallback) {
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     if (!Number.isFinite(v) || v < 1) return fallback;
     return Math.floor(v);
   }
 
   function parseNonNegativeInt(inputEl, fallback) {
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     if (!Number.isFinite(v) || v < 0) return fallback;
     return Math.floor(v);
   }
 
   function parseNumber(inputEl, fallback) {
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     return Number.isFinite(v) ? v : fallback;
   }
 
   function parseWeight(inputEl, fallback) {
-    const v = Number(inputEl.value);
+    const v = Number(inputEl && inputEl.value);
     return Number.isFinite(v) && v >= 0 ? v : fallback;
   }
 
@@ -741,6 +760,75 @@
       mode === 'pdi+ff'
     );
     return { usesFeedforward, usesP, usesI, usesD };
+  }
+
+  function currentBlobMode() {
+    if (!blobModeInput) return DEFAULT_BLOB_MODE;
+    return blobModeInput.value === 'dynamic' ? 'dynamic' : 'fixed';
+  }
+
+  function parseBlobModelInputs() {
+    const txGas = Math.max(1, parsePositive(txGasInput, DEFAULT_TX_GAS));
+    const txBytes = parsePositive(txBytesInput, DEFAULT_TX_BYTES);
+    const batchOverheadBytes = parsePositive(batchOverheadBytesInput, DEFAULT_BATCH_OVERHEAD_BYTES);
+    const compressionRatio = Math.max(1e-9, parsePositive(compressionRatioInput, DEFAULT_COMPRESSION_RATIO));
+    const blobUtilization = clampNum(
+      parsePositive(blobUtilizationInput, DEFAULT_BLOB_UTILIZATION),
+      1e-9,
+      1
+    );
+    const minBlobsPerProposal = parsePositive(
+      minBlobsPerProposalInput,
+      DEFAULT_MIN_BLOBS_PER_PROPOSAL
+    );
+    return {
+      txGas,
+      txBytes,
+      batchOverheadBytes,
+      compressionRatio,
+      blobUtilization,
+      minBlobsPerProposal
+    };
+  }
+
+  function estimateDynamicBlobs(l2GasPerProposal, blobModel) {
+    if (!(l2GasPerProposal > 0)) {
+      return Math.max(0, blobModel.minBlobsPerProposal);
+    }
+    const txGas = Math.max(1, blobModel.txGas);
+    const txBytes = Math.max(0, blobModel.txBytes);
+    const batchOverheadBytes = Math.max(0, blobModel.batchOverheadBytes);
+    const compressionRatio = Math.max(1e-9, blobModel.compressionRatio);
+    const blobUtilization = clampNum(blobModel.blobUtilization, 1e-9, 1);
+    const minBlobs = Math.max(0, blobModel.minBlobsPerProposal);
+
+    const txCount = l2GasPerProposal / txGas;
+    const uncompressedBytes = batchOverheadBytes + txCount * txBytes;
+    const compressedBytes = uncompressedBytes / compressionRatio;
+    const bytesPerBlob = BLOB_GAS_PER_BLOB * blobUtilization;
+    const blobs = compressedBytes > 0 ? Math.ceil(compressedBytes / bytesPerBlob) : 0;
+    return Math.max(minBlobs, blobs);
+  }
+
+  function updateBlobEstimatePreview() {
+    if (!numBlobsEstimatedInput) return;
+    if (currentBlobMode() !== 'dynamic') {
+      numBlobsEstimatedInput.value = '-';
+      return;
+    }
+
+    const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
+    const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
+    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 2);
+    const l2DemandRegime = l2DemandRegimeInput ? (l2DemandRegimeInput.value || 'base') : 'base';
+    const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
+    const l2BlocksPerL1Block = l2BlockTimeSec > 0 ? (L1_BLOCK_TIME_SECONDS / l2BlockTimeSec) : 0;
+    const l2GasPerL1BlockBase = l2GasPerL2Block * l2BlocksPerL1Block;
+    const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
+    const l2GasPerProposal = l2GasPerL1BlockTarget * postEveryBlocks;
+    const blobModel = parseBlobModelInputs();
+    const estimated = estimateDynamicBlobs(l2GasPerProposal, blobModel);
+    numBlobsEstimatedInput.value = formatNum(estimated, 2);
   }
 
   function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {
@@ -954,6 +1042,19 @@
     if (!autoAlphaEnabled) ensureFeedforwardDefaults();
   }
 
+  function syncBlobModeUi() {
+    const mode = currentBlobMode();
+    const dynamic = mode === 'dynamic';
+    if (blobFixedLabel) blobFixedLabel.classList.toggle('hidden', dynamic);
+    if (blobEstimateLabel) blobEstimateLabel.classList.toggle('hidden', !dynamic);
+    if (blobDynamicGroup) blobDynamicGroup.classList.toggle('hidden', !dynamic);
+    if (numBlobsInput) {
+      numBlobsInput.disabled = dynamic;
+      numBlobsInput.title = dynamic ? 'Disabled when Blob model = dynamic' : '';
+    }
+    updateBlobEstimatePreview();
+  }
+
   function currentFeeMechanism() {
     if (!feeMechanismInput) return DEFAULT_FEE_MECHANISM;
     return feeMechanismInput.value === 'arbitrum' ? 'arbitrum' : 'taiko';
@@ -1072,6 +1173,7 @@
     } else {
       l2TpsInput.value = 'custom';
     }
+    updateBlobEstimatePreview();
   }
 
   function syncL2GasFromTps() {
@@ -1085,6 +1187,7 @@
     const gasPerL2Block = Math.max(0, tps * l2BlockTimeSec * ERC20_TRANSFER_GAS);
     l2GasPerL2BlockInput.value = String(Math.round(gasPerL2Block));
     setCustomTpsLabel(tps);
+    updateBlobEstimatePreview();
     return true;
   }
 
@@ -1284,6 +1387,7 @@
     const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
     const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
     syncTpsFromL2Gas();
+    updateBlobEstimatePreview();
     const l2GasScenario = l2GasScenarioInput.value || 'constant';
     const l2DemandRegime = l2DemandRegimeInput.value || 'base';
     const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
@@ -1291,7 +1395,9 @@
     const l2GasPerL1BlockBase = l2GasPerL2Block * l2BlocksPerL1Block;
     const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
-    const numBlobs = parsePositive(numBlobsInput, 0);
+    const blobMode = currentBlobMode();
+    const fixedNumBlobs = parsePositive(numBlobsInput, 0);
+    const blobModel = parseBlobModelInputs();
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
     const feeMechanism = currentFeeMechanism();
     const controllerMode = controllerModeInput.value || 'ff';
@@ -1317,8 +1423,12 @@
     const l2GasPerProposalBase = l2GasPerL1BlockBase * postEveryBlocks;
     const autoAlphaEnabled = autoAlphaInput.checked;
     const autoAlphaGas = l2GasPerProposalBase > 0 ? (l1GasUsed / l2GasPerProposalBase) : 0;
+    let expectedBlobsBase = fixedNumBlobs;
+    if (blobMode === 'dynamic') {
+      expectedBlobsBase = estimateDynamicBlobs(l2GasPerProposalBase, blobModel);
+    }
     const autoAlphaBlob =
-      l2GasPerProposalBase > 0 ? ((numBlobs * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
+      l2GasPerProposalBase > 0 ? ((expectedBlobsBase * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
     if (feeMechanism === 'taiko') {
       if (autoAlphaEnabled) {
         alphaGasInput.value = autoAlphaGas.toFixed(6);
@@ -1404,11 +1514,14 @@
       const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
       const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
 
-      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
-      const blobCostWei = numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
-      const totalCostWei = gasCostWei + blobCostWei;
       const l2GasPerL1Block_i = derivedL2GasPerL1Block[i];
       const l2GasPerProposal_i = l2GasPerL1Block_i * postEveryBlocks;
+      const numBlobs_i = blobMode === 'dynamic'
+        ? estimateDynamicBlobs(l2GasPerProposal_i, blobModel)
+        : fixedNumBlobs;
+      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
+      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
+      const totalCostWei = gasCostWei + blobCostWei;
 
       derivedGasCostEth[i] = gasCostWei / 1e18;
       derivedBlobCostEth[i] = blobCostWei / 1e18;
@@ -1607,7 +1720,14 @@
         const sweepSimCfg = {
           postEveryBlocks,
           l1GasUsed,
-          numBlobs,
+          blobMode,
+          fixedNumBlobs,
+          txGas: blobModel.txGas,
+          txBytes: blobModel.txBytes,
+          batchOverheadBytes: blobModel.batchOverheadBytes,
+          compressionRatio: blobModel.compressionRatio,
+          blobUtilization: blobModel.blobUtilization,
+          minBlobsPerProposal: blobModel.minBlobsPerProposal,
           priorityFeeWei,
           dffBlocks,
           dfbBlocks,
@@ -1692,8 +1812,12 @@
       const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
       const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
 
+      const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
+      const numBlobs_i = simCfg.blobMode === 'dynamic'
+        ? estimateDynamicBlobs(l2GasPerProposal_i, simCfg)
+        : simCfg.fixedNumBlobs;
       const gasCostWei = simCfg.l1GasUsed * (baseFeeWei + simCfg.priorityFeeWei);
-      const blobCostWei = simCfg.numBlobs * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
+      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
       const totalCostWei = gasCostWei + blobCostWei;
 
       const fbLocal = local - simCfg.dfbBlocks;
@@ -1739,7 +1863,6 @@
       }
       feePrev = chargedFeeGwei;
 
-      const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
       if (l2GasPerProposal_i > 0) {
         const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
         breakEvenFeeSum += breakEvenFeeWeiPerL2Gas / 1e9;
@@ -2041,7 +2164,9 @@
 
     const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
     const l1GasUsed = parsePositive(l1GasUsedInput, 0);
-    const numBlobs = parsePositive(numBlobsInput, 0);
+    const blobMode = currentBlobMode();
+    const fixedNumBlobs = parsePositive(numBlobsInput, 0);
+    const blobModel = parseBlobModelInputs();
     const priorityFeeWei = parsePositive(priorityFeeGweiInput, 0) * 1e9;
     const dffBlocks = parseNonNegativeInt(dffBlocksInput, 5);
     const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 5);
@@ -2063,7 +2188,14 @@
     const simCfg = {
       postEveryBlocks,
       l1GasUsed,
-      numBlobs,
+      blobMode,
+      fixedNumBlobs,
+      txGas: blobModel.txGas,
+      txBytes: blobModel.txBytes,
+      batchOverheadBytes: blobModel.batchOverheadBytes,
+      compressionRatio: blobModel.compressionRatio,
+      blobUtilization: blobModel.blobUtilization,
+      minBlobsPerProposal: blobModel.minBlobsPerProposal,
       priorityFeeWei,
       dffBlocks,
       dfbBlocks,
@@ -2816,6 +2948,13 @@
     markParamsStale('Auto alpha changed. Click Recompute derived charts.');
   });
 
+  if (blobModeInput) {
+    blobModeInput.addEventListener('change', function () {
+      syncBlobModeUi();
+      markParamsStale('Blob model changed. Click Recompute derived charts.');
+    });
+  }
+
   if (l2TpsInput) {
     l2TpsInput.addEventListener('change', function () {
       if (syncL2GasFromTps()) {
@@ -2869,7 +3008,14 @@
     l2GasScenarioInput,
     l2DemandRegimeInput,
     l1GasUsedInput,
+    blobModeInput,
     numBlobsInput,
+    txGasInput,
+    txBytesInput,
+    batchOverheadBytesInput,
+    compressionRatioInput,
+    blobUtilizationInput,
+    minBlobsPerProposalInput,
     priorityFeeGweiInput,
     alphaGasInput,
     alphaBlobInput,
@@ -2889,7 +3035,7 @@
     maxFeeGweiInput,
     initialVaultEthInput,
     targetVaultEthInput
-  ].forEach(function (el) {
+  ].filter(Boolean).forEach(function (el) {
     el.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     });
@@ -2971,5 +3117,6 @@
 
   markScoreStale('not computed yet');
   syncFeeMechanismUi();
+  syncBlobModeUi();
   initDatasets();
 })();
