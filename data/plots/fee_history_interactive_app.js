@@ -1757,17 +1757,20 @@
         let label = `Saved run ${i + 1} ${metricLabel}`;
         let dash = [6, 4];
         let width = 1.1;
+        let show = false;
         const run = savedRuns[i];
         if (run) {
           const name = runDisplayName(run, i);
           label = `${name} ${metricLabel}`;
           dash = run.solidLine ? [] : [6, 4];
           width = run.solidLine ? 1.4 : 1.1;
+          show = Boolean(run.visible && runMatchesCurrentView(run));
         }
 
         if (
           slot.label === label
           && String(slot.width) === String(width)
+          && Boolean(slot.show !== false) === show
           && Array.isArray(slot.dash)
           && Array.isArray(dash)
           && slot.dash.length === dash.length
@@ -1777,16 +1780,19 @@
         }
 
         if (typeof plot.setSeries === 'function') {
-          plot.setSeries(startIndex + i, { label, dash, width });
+          plot.setSeries(startIndex + i, { label, dash, width, show });
         } else {
           slot.label = label;
           slot.dash = dash;
           slot.width = width;
+          slot.show = show;
         }
 
         if (legendLabels && legendLabels[startIndex + i]) {
           const el = legendLabels[startIndex + i];
           if (el.textContent !== label) el.textContent = label;
+          const row = el.closest('.u-series');
+          if (row && row.style) row.style.display = show ? '' : 'none';
         }
       }
     };
@@ -1932,6 +1938,33 @@
     const currentVault = showCurrentRun ? derivedVaultEth : hidden;
     const compareCharged = overlaySeriesForRuns('chargedFee', n);
     const compareVault = overlaySeriesForRuns('vault', n);
+    if (requiredFeePlot && typeof requiredFeePlot.setSeries === 'function') {
+      requiredFeePlot.setSeries(3, { show: showCurrentRun });
+      const requiredLegendRows = requiredFeePlot.root?.querySelectorAll
+        ? requiredFeePlot.root.querySelectorAll('.u-legend .u-series')
+        : null;
+      if (requiredLegendRows && requiredLegendRows[3] && requiredLegendRows[3].style) {
+        requiredLegendRows[3].style.display = showCurrentRun ? '' : 'none';
+      }
+    }
+    if (chargedFeeOnlyPlot && typeof chargedFeeOnlyPlot.setSeries === 'function') {
+      chargedFeeOnlyPlot.setSeries(1, { show: showCurrentRun });
+      const chargedLegendRows = chargedFeeOnlyPlot.root?.querySelectorAll
+        ? chargedFeeOnlyPlot.root.querySelectorAll('.u-legend .u-series')
+        : null;
+      if (chargedLegendRows && chargedLegendRows[1] && chargedLegendRows[1].style) {
+        chargedLegendRows[1].style.display = showCurrentRun ? '' : 'none';
+      }
+    }
+    if (vaultPlot && typeof vaultPlot.setSeries === 'function') {
+      vaultPlot.setSeries(2, { show: showCurrentRun });
+      const vaultLegendRows = vaultPlot.root?.querySelectorAll
+        ? vaultPlot.root.querySelectorAll('.u-legend .u-series')
+        : null;
+      if (vaultLegendRows && vaultLegendRows[2] && vaultLegendRows[2].style) {
+        vaultLegendRows[2].style.display = showCurrentRun ? '' : 'none';
+      }
+    }
     syncSavedRunSeriesPresentation();
 
     if (requiredFeePlot) {
