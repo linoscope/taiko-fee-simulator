@@ -110,6 +110,29 @@ Run simulator core tests:
 node --test data/plots/tests/*.test.js
 ```
 
+Run visual regression screenshot tests (Playwright):
+
+```bash
+npm install
+npm run visual:install
+npm run visual:test
+```
+
+Create/update screenshot baselines intentionally:
+
+```bash
+npm run visual:update
+```
+
+Inspect visual diffs:
+
+```bash
+npm run visual:report
+```
+
+Visual tests live in `tests/visual/` and target:
+- `data/plots/fee_history_interactive.html`
+
 ## Notes
 
 - Generated outputs can be large (especially full-range datasets).

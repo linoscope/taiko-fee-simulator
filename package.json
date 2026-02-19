@@ -1,0 +1,16 @@
+{
+  "name": "taiko-fee-simulator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Visual regression and simulation tests for taiko-fee-simulator",
+  "scripts": {
+    "test:core": "node --test data/plots/tests/*.test.js",
+    "visual:install": "playwright install chromium",
+    "visual:test": "playwright test tests/visual",
+    "visual:update": "playwright test tests/visual --update-snapshots",
+    "visual:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
