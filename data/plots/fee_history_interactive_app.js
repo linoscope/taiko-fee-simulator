@@ -214,6 +214,7 @@
   const saveRunBtn = document.getElementById('saveRunBtn');
   const toggleCurrentRunBtn = document.getElementById('toggleCurrentRunBtn');
   const recomputeSavedRunsBtn = document.getElementById('recomputeSavedRunsBtn');
+  const updateAssumptionsRecomputeSavedRunsBtn = document.getElementById('updateAssumptionsRecomputeSavedRunsBtn');
   const clearSavedRunsBtn = document.getElementById('clearSavedRunsBtn');
   const savedRunsStatus = document.getElementById('savedRunsStatus');
   const savedRunsActionText = document.getElementById('savedRunsActionText');
@@ -1396,6 +1397,9 @@
     savedRunsStatus.textContent = `${savedRuns.length} / ${MAX_SAVED_RUNS} saved`;
     if (clearSavedRunsBtn) clearSavedRunsBtn.disabled = savedRuns.length === 0;
     if (recomputeSavedRunsBtn) recomputeSavedRunsBtn.disabled = savedRuns.length === 0;
+    if (updateAssumptionsRecomputeSavedRunsBtn) {
+      updateAssumptionsRecomputeSavedRunsBtn.disabled = savedRuns.length === 0;
+    }
   }
 
   function setSavedRunsActionText(message) {
@@ -1684,6 +1688,74 @@
     const suffix = rerunCount === 1 ? '' : 's';
     setSavedRunsActionText(`Recomputed ${rerunCount} run${suffix} (${formatClockTime(Date.now())}).`);
     setStatus(`Recomputed ${rerunCount} saved run${suffix} for current view.`);
+  }
+
+  function readAssumptionOverridesFromUi() {
+    syncTpsFromL2Gas();
+    updateBlobEstimatePreview();
+    return {
+      postEveryBlocks: parsePositiveInt(postEveryBlocksInput, 10),
+      l2GasPerL2Block: parsePositive(l2GasPerL2BlockInput, 0),
+      l2Tps: currentTpsSnapshot(),
+      l2BlockTimeSec: parsePositive(l2BlockTimeSecInput, 2),
+      l2GasScenario: l2GasScenarioInput.value || 'normal',
+      l2DemandRegime: l2DemandRegimeInput.value || 'base',
+      l1GasUsed: parsePositive(l1GasUsedInput, 0),
+      blobMode: currentBlobMode(),
+      fixedNumBlobs: parsePositive(numBlobsInput, 0),
+      blobModel: parseBlobModelInputs(),
+      priorityFeeGwei: parsePositive(priorityFeeGweiInput, 0),
+    };
+  }
+
+  function updateAssumptionsAndRecomputeSavedRunsNow() {
+    if (!savedRunManager.hasRuns()) {
+      setSavedRunsActionText('No saved runs to update.');
+      setStatus('No saved runs to update.');
+      return;
+    }
+    const rangeInfo = currentRangeIndices();
+    if (!rangeInfo) {
+      setSavedRunsActionText('No valid range selected.');
+      setStatus('Cannot update saved runs: invalid current range.');
+      return;
+    }
+
+    const assumptions = readAssumptionOverridesFromUi();
+    const savedRuns = savedRunManager.getRuns();
+    const nowTs = Date.now();
+    let updatedCount = 0;
+
+    for (const run of savedRuns) {
+      if (!run || !run.params) continue;
+      const mergedParams = normalizeRunParams({ ...run.params, ...assumptions });
+      run.params = mergedParams;
+      run.tps = Number.isFinite(mergedParams.l2Tps) ? mergedParams.l2Tps : run.tps;
+      run.series = replaySavedRunForRange(run, rangeInfo);
+      run.datasetId = activeDatasetId;
+      run.minBlock = rangeInfo.minB;
+      run.maxBlock = rangeInfo.maxB;
+      run.lastRecomputedAt = nowTs;
+      updatedCount += 1;
+    }
+
+    if (updatedCount > 0) {
+      savedRunManager.persist();
+    }
+    renderSavedRunsList();
+    refreshComparisonPlots();
+
+    if (!updatedCount) {
+      setSavedRunsActionText('No runs were updated.');
+      setStatus('No saved runs were updated.');
+      return;
+    }
+
+    const suffix = updatedCount === 1 ? '' : 's';
+    setSavedRunsActionText(
+      `Updated assumptions + recomputed ${updatedCount} run${suffix} (${formatClockTime(nowTs)}).`
+    );
+    setStatus(`Updated L2/L1 assumptions and recomputed ${updatedCount} saved run${suffix}.`);
   }
 
   function overlaySeriesForRuns(field, n) {
@@ -3460,6 +3532,12 @@
   if (recomputeSavedRunsBtn) {
     recomputeSavedRunsBtn.addEventListener('click', function () {
       recomputeSavedRunsNow();
+    });
+  }
+
+  if (updateAssumptionsRecomputeSavedRunsBtn) {
+    updateAssumptionsRecomputeSavedRunsBtn.addEventListener('click', function () {
+      updateAssumptionsAndRecomputeSavedRunsNow();
     });
   }
 
