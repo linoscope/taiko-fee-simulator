@@ -177,6 +177,46 @@
     }
     .plot { width: 100%; min-height: 336px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #fff; }
     .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #334155; word-break: break-word; }
+    .saved-runs-list {
+      margin-top: 8px;
+      display: grid;
+      gap: 8px;
+    }
+    .saved-run {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #ffffff;
+      font-size: 12px;
+    }
+    .saved-run-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .saved-run-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 23, 42, 0.2);
+      flex: 0 0 10px;
+    }
+    .saved-run-meta {
+      color: #475569;
+      margin-top: 4px;
+      font-size: 11px;
+    }
+    .saved-run pre {
+      margin: 6px 0 0;
+      padding: 6px;
+      overflow: auto;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      font-size: 11px;
+      max-height: 160px;
+    }
     .score-kpis {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -384,14 +424,27 @@
         </div>
 
         <div class="assumptions">
+          <div class="assumptions-title">Run comparison (in-memory)</div>
+          <div class="controls">
+            <button id="saveRunBtn">Save current run</button>
+            <button id="toggleCurrentRunBtn">Hide current run</button>
+            <button id="recomputeSavedRunsBtn">Recompute saved runs</button>
+            <button id="clearSavedRunsBtn">Clear saved runs</button>
+            <span class="range-sub" id="savedRunsStatus">0 / 6 saved</span>
+            <span class="range-sub" id="savedRunsActionText"></span>
+          </div>
+          <div id="savedRunsList" class="saved-runs-list"></div>
+        </div>
+
+        <div class="assumptions">
           <div class="assumptions-title">L2 demand assumptions</div>
           <div class="controls">
             <label>Post every N L1 blocks <input id="postEveryBlocks" type="number" min="1" step="1" value="10" /></label>
-            <label>L2 gas / L2 block <input id="l2GasPerL2Block" type="number" min="0" step="100000" value="1000000" /></label>
+            <label>L2 gas / L2 block <input id="l2GasPerL2Block" type="number" min="0" step="100000" value="140000" /></label>
             <label>L2 TPS
               <select id="l2Tps">
                 <option value="0.5">0.5</option>
-                <option value="1">1</option>
+                <option value="1" selected>1</option>
                 <option value="2">2</option>
                 <option value="5">5</option>
                 <option value="10">10</option>
@@ -399,7 +452,7 @@
                 <option value="50">50</option>
                 <option value="100">100</option>
                 <option value="200">200</option>
-                <option value="custom" selected>custom</option>
+                <option value="custom">custom</option>
               </select>
               <span class="inline-help" title="tx means one ERC20 transfer, assumed to consume 70,000 L2 gas. TPS conversion: L2 gas/L2 block = TPS * L2 block time * 70,000.">?</span>
             </label>
@@ -428,8 +481,8 @@
             <label>L1 gas used <input id="l1GasUsed" type="number" min="0" step="1000" value="100000" /></label>
             <label>Blob model
               <select id="blobMode">
-                <option value="fixed" selected>fixed</option>
-                <option value="dynamic">dynamic (tx/bytes based)</option>
+                <option value="fixed">fixed</option>
+                <option value="dynamic" selected>dynamic (tx/bytes based)</option>
               </select>
             </label>
             <label id="blobFixedLabel">Fixed blobs <input id="numBlobs" type="number" min="0" step="1" value="2" /></label>
@@ -459,6 +512,7 @@
             <label>Fee mechanism
               <select id="feeMechanism">
                 <option value="taiko" selected>Taiko (P/I/D + FF)</option>
+                <option value="eip1559">EIP-1559 mode</option>
                 <option value="arbitrum">Arbitrum (surplus pricer)</option>
               </select>
             </label>
@@ -467,18 +521,18 @@
               <label>Controller mode
                 <select id="controllerMode">
                   <option value="ff">ff</option>
-                  <option value="p">p</option>
+                  <option value="p" selected>p</option>
                   <option value="pi">pi</option>
                   <option value="pd">pd</option>
                   <option value="pdi">pdi</option>
                   <option value="pi+ff">pi+ff</option>
-                  <option value="pdi+ff" selected>pdi+ff</option>
+                  <option value="pdi+ff">pdi+ff</option>
                 </select>
               </label>
-              <label><input id="autoAlpha" type="checkbox" checked /> Auto alpha</label>
-              <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0.001667" /></label>
-              <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0.004369" /></label>
-              <label>Kp <input id="kp" type="number" min="0" step="0.001" value="1" /></label>
+              <label><input id="autoAlpha" type="checkbox" /> Auto alpha</label>
+              <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0" /></label>
+              <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0" /></label>
+              <label>Kp <input id="kp" type="number" min="0" step="0.001" value="10" /></label>
               <label>P floor (gwei/L2 gas) <input id="pMinGwei" type="number" step="0.0001" value="0" /></label>
               <label>Ki <input id="ki" type="number" min="0" step="0.001" value="0" /></label>
               <label>Kd <input id="kd" type="number" min="0" step="0.001" value="0" /></label>
@@ -494,7 +548,11 @@
               <label>Inertia <input id="arbInertia" type="number" min="1" step="1" value="10" /></label>
               <label>Equilibration units (L2 gas) <input id="arbEquilUnits" type="number" min="1" step="1000000" value="96000000" /></label>
             </div>
-            <label>Min fee (gwei/L2 gas) <input id="minFeeGwei" type="number" min="0" step="0.0001" value="0" /></label>
+            <div id="eip1559ParamsGroup" class="mechanism-group hidden">
+              <div class="mechanism-group-title">EIP-1559 mode params</div>
+              <label>Max change denominator <input id="eip1559Denominator" type="number" min="1" step="1" value="8" /></label>
+            </div>
+            <label>Min fee (gwei/L2 gas) <input id="minFeeGwei" type="number" min="0" step="0.0001" value="0.01" /></label>
             <label>Max fee (gwei/L2 gas) <input id="maxFeeGwei" type="number" min="0" step="0.0001" value="1.0" /></label>
             <label>Initial vault (ETH) <input id="initialVaultEth" type="number" min="0" step="0.1" value="10" /></label>
             <label>Target vault (ETH) <input id="targetVaultEth" type="number" min="0" step="0.1" value="10" /></label>
@@ -641,11 +699,14 @@
         <p><strong>Derivative filter:</strong> <code>de_t = epsilon_t - epsilon_(t-1), de_f_t = beta*de_f_(t-1) + (1-beta)*de_t</code></p>
         <p><strong>Feedback state:</strong> <code>D_t = targetVault - vault_(t-d_fb), epsilon_t = D_t / targetVault, I_t = clamp(I_(t-1) + epsilon_t, Imin, Imax)</code></p>
         <p><strong>Fee law:</strong> <code>P_t = max(pFloor, Kp*epsilon_t*(maxFee-minFee)); fee_t = clamp(FF_t + P_t + Ki*I_t*(maxFee-minFee) + Kd*de_f_t*(maxFee-minFee), minFee, maxFee)</code></p>
+        <p><strong>EIP-1559 mode:</strong> <code>error_t = clamp((targetVault - vault_t) / targetVault, -8, 1); fee_(t+1) = clamp(fee_t * (1 + error_t / denom), minFee, maxFee)</code></p>
         <p><strong>Arbitrum-style surplus pricer:</strong> <code>surplus_t = vault_t - targetVault; desired'_t = -surplus_t / equilUnits; actual'_t = (surplus_t - surplus_(t-1)) / unitsAllocated; price_(t+1) = max(0, price_t + (desired'_t - actual'_t) * unitsAllocated / (equilUnits / inertia + unitsAllocated)); fee_t = clamp(price_t, minFee, maxFee)</code></p>
         <ul>
           <li><code>blob model = fixed</code>: <code>numBlobs_t = fixedBlobs</code></li>
           <li><code>blob model = dynamic</code>: <code>numBlobs_t = max(minBlobs, ceil((batchOverhead + (l2GasPerProposal_t / txGas) * txBytes) / (compressionRatio * 131072 * blobUtilization)))</code></li>
           <li><code>auto alpha</code> uses base throughput and selected blob model: <code>alpha_gas = l1GasUsed / l2GasPerProposal_base</code>, <code>alpha_blob = (numBlobs_base * 131072) / l2GasPerProposal_base</code></li>
+          <li><code>EIP-1559 mode</code> updates only on posting blocks and starts from <code>minFee</code></li>
+          <li>Reimbursement and liabilities are not modeled; vault is direct revenue minus posting cost cashflow</li>
           <li>Assumes L1 block time = 12s; demand multipliers are <code>low=0.7x</code>, <code>base=1.0x</code>, <code>high=1.4x</code></li>
           <li>L2 gas scenarios are mean-neutralized around demand-adjusted throughput target</li>
           <li>Posting happens when <code>(i + 1) % postEveryBlocks == 0</code>; revenue settles to vault at post time</li>

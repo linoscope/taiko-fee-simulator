@@ -3,15 +3,16 @@
   const ERC20_TRANSFER_GAS = 70000;
   const L1_BLOCK_TIME_SECONDS = 12;
   const DEFAULT_FEE_MECHANISM = "taiko";
-  const DEFAULT_BLOB_MODE = "fixed";
+  const DEFAULT_BLOB_MODE = "dynamic";
   const DEFAULT_TX_GAS = 70000.000000000000;
   const DEFAULT_TX_BYTES = 120.000000000000;
   const DEFAULT_BATCH_OVERHEAD_BYTES = 1200.000000000000;
   const DEFAULT_COMPRESSION_RATIO = 1.000000000000;
   const DEFAULT_BLOB_UTILIZATION = 0.950000000000;
   const DEFAULT_MIN_BLOBS_PER_PROPOSAL = 1.000000000000;
-  const DEFAULT_ALPHA_GAS = 0.001666666667;
-  const DEFAULT_ALPHA_BLOB = 0.004369066667;
+  const DEFAULT_ALPHA_GAS = 0.000000000000;
+  const DEFAULT_ALPHA_BLOB = 0.000000000000;
+  const DEFAULT_EIP1559_DENOMINATOR = 8;
   const DEFAULT_ARB_INITIAL_PRICE_GWEI = 0.001000000000;
   const DEFAULT_ARB_INERTIA = 10;
   const DEFAULT_ARB_EQUIL_UNITS = 96000000;
@@ -24,6 +25,15 @@
   const SWEEP_KD_VALUES = Object.freeze([0.0]);
   const SWEEP_I_MAX_VALUES = Object.freeze([5.0, 10.0, 100.0]);
   const SWEEP_MAX_BLOCKS = 200000;
+  const MAX_SAVED_RUNS = 6;
+  const SAVED_RUN_COLORS = Object.freeze([
+    '#0ea5e9',
+    '#f97316',
+    '#a855f7',
+    '#22c55e',
+    '#e11d48',
+    '#14b8a6'
+  ]);
   const DATASET_MANIFEST = (window.__feeDatasetManifest && Array.isArray(window.__feeDatasetManifest.datasets))
     ? window.__feeDatasetManifest.datasets.slice()
     : [];
@@ -100,7 +110,9 @@
   const priorityFeeGweiInput = document.getElementById('priorityFeeGwei');
   const feeMechanismInput = document.getElementById('feeMechanism');
   const taikoParamsGroup = document.getElementById('taikoParamsGroup');
+  const eip1559ParamsGroup = document.getElementById('eip1559ParamsGroup');
   const arbitrumParamsGroup = document.getElementById('arbitrumParamsGroup');
+  const eip1559DenominatorInput = document.getElementById('eip1559Denominator');
   const autoAlphaInput = document.getElementById('autoAlpha');
   const alphaGasInput = document.getElementById('alphaGas');
   const alphaBlobInput = document.getElementById('alphaBlob');
@@ -197,6 +209,13 @@
   const sweepCandidateCount = document.getElementById('sweepCandidateCount');
   const sweepRangeCount = document.getElementById('sweepRangeCount');
   const sweepHover = document.getElementById('sweepHover');
+  const saveRunBtn = document.getElementById('saveRunBtn');
+  const toggleCurrentRunBtn = document.getElementById('toggleCurrentRunBtn');
+  const recomputeSavedRunsBtn = document.getElementById('recomputeSavedRunsBtn');
+  const clearSavedRunsBtn = document.getElementById('clearSavedRunsBtn');
+  const savedRunsStatus = document.getElementById('savedRunsStatus');
+  const savedRunsActionText = document.getElementById('savedRunsActionText');
+  const savedRunsList = document.getElementById('savedRunsList');
 
   const l2GasWrap = document.getElementById('l2GasPlot');
   const baseWrap = document.getElementById('basePlot');
@@ -567,6 +586,15 @@
 
   function formatNum(x, frac = 4) {
     return Number(x).toLocaleString(undefined, { maximumFractionDigits: frac });
+  }
+
+  function formatFeeGwei(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 'n/a';
+    const abs = Math.abs(n);
+    if (abs > 0 && abs < 1e-4) return `${formatNum(n, 9)} gwei/L2gas`;
+    if (abs > 0 && abs < 1e-2) return `${formatNum(n, 6)} gwei/L2gas`;
+    return `${formatNum(n, 4)} gwei/L2gas`;
   }
 
   function clampRange(a, b) {
@@ -1010,7 +1038,9 @@
       uxBadness: score.uxBadness,
       healthBadness: score.healthBadness,
       totalBadness: score.totalBadness,
-      mode: mechanism === 'taiko' ? (controllerModeInput.value || 'ff') : 'arbitrum',
+      mode: mechanism === 'taiko'
+        ? (controllerModeInput.value || 'ff')
+        : (mechanism === 'eip1559' ? 'eip1559' : 'arbitrum'),
       alphaVariant: mechanism === 'taiko' ? (autoAlphaInput.checked ? 'auto' : 'current') : 'n/a',
       alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
       alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
@@ -1057,12 +1087,15 @@
 
   function currentFeeMechanism() {
     if (!feeMechanismInput) return DEFAULT_FEE_MECHANISM;
-    return feeMechanismInput.value === 'arbitrum' ? 'arbitrum' : 'taiko';
+    if (feeMechanismInput.value === 'arbitrum') return 'arbitrum';
+    if (feeMechanismInput.value === 'eip1559') return 'eip1559';
+    return 'taiko';
   }
 
   function syncFeeMechanismUi() {
     const mechanism = currentFeeMechanism();
     if (taikoParamsGroup) taikoParamsGroup.classList.toggle('hidden', mechanism !== 'taiko');
+    if (eip1559ParamsGroup) eip1559ParamsGroup.classList.toggle('hidden', mechanism !== 'eip1559');
     if (arbitrumParamsGroup) arbitrumParamsGroup.classList.toggle('hidden', mechanism !== 'arbitrum');
     if (mechanism === 'taiko') {
       syncAutoAlphaInputs();
@@ -1279,6 +1312,487 @@
   let sweepScoredHistory = [];
   let sweepRunSeq = 0;
   let sweepPoints = [];
+  let savedRuns = [];
+  let savedRunSeq = 0;
+  let showCurrentRun = true;
+  let currentRunSnapshot = null;
+
+  function currentRangeSnapshot() {
+    if (!datasetReady || !blocks.length) return null;
+    const clipped = clampRange(minInput.value, maxInput.value);
+    return { minBlock: clipped[0], maxBlock: clipped[1] };
+  }
+
+  function currentTpsSnapshot() {
+    const selected = selectedTpsValue();
+    if (Number.isFinite(selected)) return Math.max(0, selected);
+    return Math.max(0, computeTpsFromGasAndBlockTime());
+  }
+
+  function currentRangeIndices() {
+    if (!datasetReady || !blocks.length) return null;
+    const [minB, maxB] = clampRange(minInput.value, maxInput.value);
+    const i0 = lowerBound(blocks, minB);
+    const i1 = upperBound(blocks, maxB) - 1;
+    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return null;
+    return { minB, maxB, i0, i1, n: i1 - i0 + 1 };
+  }
+
+  function refreshSavedRunsStatus() {
+    if (!savedRunsStatus) return;
+    savedRunsStatus.textContent = `${savedRuns.length} / ${MAX_SAVED_RUNS} saved`;
+    if (clearSavedRunsBtn) clearSavedRunsBtn.disabled = savedRuns.length === 0;
+    if (recomputeSavedRunsBtn) recomputeSavedRunsBtn.disabled = savedRuns.length === 0;
+  }
+
+  function setSavedRunsActionText(message) {
+    if (!savedRunsActionText) return;
+    savedRunsActionText.textContent = message ? String(message) : '';
+  }
+
+  function formatClockTime(tsMs) {
+    const ts = Number(tsMs);
+    if (!Number.isFinite(ts) || ts <= 0) return 'n/a';
+    try {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (_) {
+      return 'n/a';
+    }
+  }
+
+  function syncCurrentRunButtonLabel() {
+    if (!toggleCurrentRunBtn) return;
+    toggleCurrentRunBtn.textContent = showCurrentRun ? 'Hide current run' : 'Show current run';
+  }
+
+  function runMatchesCurrentView(run) {
+    if (!run || !run.series) return false;
+    const n = blocks.length;
+    return (
+      Array.isArray(run.series.chargedFee)
+      && Array.isArray(run.series.vault)
+      && run.series.chargedFee.length === n
+      && run.series.vault.length === n
+    );
+  }
+
+  function replaySavedRunForRange(run, rangeInfo) {
+    const n = blocks.length;
+    const hidden = new Array(n).fill(null);
+    if (!run || !run.params || !rangeInfo) {
+      return { chargedFee: hidden.slice(), vault: hidden.slice() };
+    }
+
+    const params = run.params;
+    const mechanism = params.feeMechanism === 'arbitrum'
+      ? 'arbitrum'
+      : (params.feeMechanism === 'eip1559' ? 'eip1559' : 'taiko');
+    const modeFlags = mechanism === 'taiko'
+      ? getModeFlags(params.controllerMode || 'ff')
+      : { usesFeedforward: false, usesP: false, usesI: false, usesD: false };
+
+    const postEveryBlocks = Math.max(1, Math.floor(Number(params.postEveryBlocks) || 10));
+    const l2GasPerL2Block = Math.max(0, Number(params.l2GasPerL2Block) || 0);
+    const l2BlockTimeSec = Math.max(0.1, Number(params.l2BlockTimeSec) || 2);
+    const l2GasScenario = params.l2GasScenario || 'normal';
+    const l2DemandRegime = params.l2DemandRegime || 'base';
+    const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
+    const l1GasUsed = Math.max(0, Number(params.l1GasUsed) || 0);
+    const priorityFeeGwei = Math.max(0, Number(params.priorityFeeGwei) || 0);
+    const blobMode = params.blobMode === 'dynamic' ? 'dynamic' : 'fixed';
+    const fixedNumBlobs = Math.max(0, Number(params.fixedNumBlobs) || 0);
+    const blobModelRaw = params.blobModel || {};
+    const blobModel = {
+      txGas: Math.max(1, Number(blobModelRaw.txGas) || DEFAULT_TX_GAS),
+      txBytes: Math.max(0, Number(blobModelRaw.txBytes) || DEFAULT_TX_BYTES),
+      batchOverheadBytes: Math.max(0, Number(blobModelRaw.batchOverheadBytes) || DEFAULT_BATCH_OVERHEAD_BYTES),
+      compressionRatio: Math.max(1e-9, Number(blobModelRaw.compressionRatio) || DEFAULT_COMPRESSION_RATIO),
+      blobUtilization: clampNum(
+        Number(blobModelRaw.blobUtilization) || DEFAULT_BLOB_UTILIZATION,
+        1e-9,
+        1
+      ),
+      minBlobsPerProposal: Math.max(0, Number(blobModelRaw.minBlobsPerProposal) || DEFAULT_MIN_BLOBS_PER_PROPOSAL),
+    };
+
+    const alphaGas = Math.max(0, Number(params.alphaGas) || 0);
+    const alphaBlob = Math.max(0, Number(params.alphaBlob) || 0);
+    const kp = Math.max(0, Number(params.kp) || 0);
+    const ki = Math.max(0, Number(params.ki) || 0);
+    const kd = Math.max(0, Number(params.kd) || 0);
+    const derivBeta = clampNum(Number(params.derivBeta), 0, 1);
+    const dffBlocks = Math.max(0, Math.floor(Number(params.dffBlocks) || 0));
+    const dfbBlocks = Math.max(0, Math.floor(Number(params.dfbBlocks) || 0));
+    const pTermMinGwei = Number(params.pTermMinGwei) || 0;
+    const minFeeGwei = Math.max(0, Number(params.minFeeGwei) || 0.01);
+    const maxFeeGwei = Math.max(minFeeGwei, Number(params.maxFeeGwei) || 1.0);
+    const initialVaultEth = Math.max(0, Number(params.initialVaultEth) || 0);
+    const targetVaultEth = Math.max(0, Number(params.targetVaultEth) || 0);
+    const iMinRaw = Number(params.iMin);
+    const iMaxRaw = Number(params.iMax);
+    const iMin = Number.isFinite(iMinRaw) ? iMinRaw : 0;
+    const iMax = Number.isFinite(iMaxRaw) ? iMaxRaw : 10;
+    const iLo = Math.min(iMin, iMax);
+    const iHi = Math.max(iMin, iMax);
+
+    const eipCfg = params.eip1559 || {};
+    const eip1559Denominator = Math.max(
+      1,
+      Math.floor(Number(eipCfg.maxChangeDenominator) || DEFAULT_EIP1559_DENOMINATOR)
+    );
+    const arbCfg = params.arbitrum || {};
+    const arbInitialPriceGwei = Math.max(0, Number(arbCfg.initialPriceGwei) || DEFAULT_ARB_INITIAL_PRICE_GWEI);
+    const arbInertia = Math.max(1, Math.floor(Number(arbCfg.inertia) || DEFAULT_ARB_INERTIA));
+    const arbEquilUnits = Math.max(1, Number(arbCfg.equilUnits) || DEFAULT_ARB_EQUIL_UNITS);
+
+    const l2BlocksPerL1Block = L1_BLOCK_TIME_SECONDS / l2BlockTimeSec;
+    const l2GasPerL1Target = l2GasPerL2Block * l2BlocksPerL1Block * demandMultiplier;
+    const localGasSeries = buildL2GasSeries(rangeInfo.n, l2GasPerL1Target, l2GasScenario);
+
+    const chargedFee = new Array(n).fill(null);
+    const vaultSeries = new Array(n).fill(null);
+    const localVaultSeries = new Array(rangeInfo.n).fill(initialVaultEth);
+
+    const priorityFeeWei = priorityFeeGwei * 1e9;
+    const minFeeWei = minFeeGwei * 1e9;
+    const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
+    const feeRangeWei = maxFeeWei - minFeeWei;
+    const pTermMinWei = pTermMinGwei * 1e9;
+
+    let vault = initialVaultEth;
+    let pendingRevenueEth = 0;
+    let integralState = 0;
+    let epsilonPrev = 0;
+    let derivFiltered = 0;
+    let eip1559FeeWeiPerL2Gas = minFeeWei;
+    let arbPriceGwei = clampNum(arbInitialPriceGwei, minFeeGwei, maxFeeGwei);
+    let arbLastSurplusEth = initialVaultEth - targetVaultEth;
+
+    for (let local = 0; local < rangeInfo.n; local++) {
+      const i = rangeInfo.i0 + local;
+      const baseFeeWei = baseFeeGwei[i] * 1e9;
+      const blobBaseFeeWei = blobFeeGwei[i] * 1e9;
+      const ffLocal = Math.max(0, local - dffBlocks);
+      const ffIndex = rangeInfo.i0 + ffLocal;
+      const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
+      const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
+
+      const l2GasPerL1Block_i = localGasSeries[local];
+      const l2GasPerProposal_i = l2GasPerL1Block_i * postEveryBlocks;
+      const numBlobs_i = blobMode === 'dynamic'
+        ? estimateDynamicBlobs(l2GasPerProposal_i, blobModel)
+        : fixedNumBlobs;
+      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
+      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
+      const totalCostWei = gasCostWei + blobCostWei;
+
+      const fbLocal = local - dfbBlocks;
+      const observedVault = fbLocal >= 0 ? localVaultSeries[fbLocal] : initialVaultEth;
+      const deficitEth = targetVaultEth - observedVault;
+      const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
+
+      let gasComponentWei = 0;
+      let blobComponentWei = 0;
+      let feedforwardWei = 0;
+      let pTermWei = 0;
+      let iTermWei = 0;
+      let dTermWei = 0;
+      let feedbackWei = 0;
+      let chargedFeeWeiPerL2Gas = minFeeWei;
+
+      if (mechanism === 'taiko') {
+        gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
+        blobComponentWei = alphaBlob * blobBaseFeeFfWei;
+        if (modeFlags.usesI) {
+          integralState = clampNum(integralState + epsilon, iLo, iHi);
+        } else {
+          integralState = 0;
+        }
+        const deRaw = local > 0 ? (epsilon - epsilonPrev) : 0;
+        derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
+        const pTermWeiRaw = modeFlags.usesP ? (kp * epsilon * feeRangeWei) : 0;
+        pTermWei = modeFlags.usesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
+        iTermWei = modeFlags.usesI ? (ki * integralState * feeRangeWei) : 0;
+        dTermWei = modeFlags.usesD ? (kd * derivFiltered * feeRangeWei) : 0;
+        feedbackWei = pTermWei + iTermWei + dTermWei;
+        feedforwardWei = modeFlags.usesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
+        chargedFeeWeiPerL2Gas = Math.max(minFeeWei, Math.min(maxFeeWei, feedforwardWei + feedbackWei));
+      } else if (mechanism === 'arbitrum') {
+        const arbRawFeeWeiPerL2Gas = Math.max(0, arbPriceGwei * 1e9);
+        chargedFeeWeiPerL2Gas = Math.max(minFeeWei, Math.min(maxFeeWei, arbRawFeeWeiPerL2Gas));
+        integralState = 0;
+        derivFiltered = 0;
+      } else {
+        chargedFeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
+        integralState = 0;
+        derivFiltered = 0;
+      }
+
+      chargedFee[i] = chargedFeeWeiPerL2Gas / 1e9;
+
+      const l2RevenueEthPerBlock = (chargedFeeWeiPerL2Gas * l2GasPerL1Block_i) / 1e18;
+      pendingRevenueEth += l2RevenueEthPerBlock;
+
+      const posted = ((i + 1) % postEveryBlocks) === 0;
+      if (posted) {
+        vault += pendingRevenueEth;
+        pendingRevenueEth = 0;
+        vault -= totalCostWei / 1e18;
+
+        if (mechanism === 'arbitrum') {
+          const unitsAllocated = Math.max(0, l2GasPerProposal_i);
+          const surplusEth = vault - targetVaultEth;
+          if (unitsAllocated > 0 && arbEquilUnits > 0 && arbInertia > 0) {
+            const inertiaUnits = arbEquilUnits / arbInertia;
+            const desiredDerivativeGwei = -(surplusEth * 1e9) / arbEquilUnits;
+            const actualDerivativeGwei =
+              ((surplusEth - arbLastSurplusEth) * 1e9) / unitsAllocated;
+            const changeDerivativeGwei = desiredDerivativeGwei - actualDerivativeGwei;
+            const denom = inertiaUnits + unitsAllocated;
+            const priceChangeGwei = denom > 0
+              ? (changeDerivativeGwei * unitsAllocated) / denom
+              : 0;
+            arbPriceGwei = Math.max(0, arbPriceGwei + priceChangeGwei);
+          }
+          arbLastSurplusEth = surplusEth;
+        } else if (mechanism === 'eip1559') {
+          if (targetVaultEth > 0) {
+            let errorRatio = (targetVaultEth - vault) / targetVaultEth;
+            errorRatio = clampNum(errorRatio, -8, 1);
+            const adjustmentFactor = 1 + (errorRatio / eip1559Denominator);
+            const nextFeeWeiPerL2Gas = eip1559FeeWeiPerL2Gas * adjustmentFactor;
+            if (Number.isFinite(nextFeeWeiPerL2Gas)) {
+              eip1559FeeWeiPerL2Gas = clampNum(nextFeeWeiPerL2Gas, minFeeWei, maxFeeWei);
+            }
+          } else {
+            eip1559FeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
+          }
+        }
+      }
+
+      localVaultSeries[local] = vault;
+      vaultSeries[i] = vault;
+      epsilonPrev = epsilon;
+    }
+
+    return { chargedFee, vault: vaultSeries };
+  }
+
+  function rerunSavedRunsForCurrentRange() {
+    const rangeInfo = currentRangeIndices();
+    if (!rangeInfo || !savedRuns.length) return 0;
+    let rerunCount = 0;
+    const nowTs = Date.now();
+    for (const run of savedRuns) {
+      if (!run) continue;
+      run.series = replaySavedRunForRange(run, rangeInfo);
+      run.datasetId = activeDatasetId;
+      run.minBlock = rangeInfo.minB;
+      run.maxBlock = rangeInfo.maxB;
+      run.lastRecomputedAt = nowTs;
+      rerunCount += 1;
+    }
+    return rerunCount;
+  }
+
+  function recomputeSavedRunsNow() {
+    if (!savedRuns.length) {
+      setSavedRunsActionText('No saved runs to recompute.');
+      setStatus('No saved runs to recompute.');
+      return;
+    }
+    const rerunCount = rerunSavedRunsForCurrentRange();
+    renderSavedRunsList();
+    refreshComparisonPlots();
+
+    if (!rerunCount) {
+      setSavedRunsActionText('No runs could be recomputed.');
+      setStatus('No saved runs could be recomputed for current view.');
+      return;
+    }
+
+    const suffix = rerunCount === 1 ? '' : 's';
+    setSavedRunsActionText(`Recomputed ${rerunCount} run${suffix} (${formatClockTime(Date.now())}).`);
+    setStatus(`Recomputed ${rerunCount} saved run${suffix} for current view.`);
+  }
+
+  function overlaySeriesForRuns(field, n) {
+    const hidden = new Array(n).fill(null);
+    const out = [];
+    for (let i = 0; i < MAX_SAVED_RUNS; i++) {
+      const run = savedRuns[i];
+      if (
+        run
+        && run.visible
+        && runMatchesCurrentView(run)
+        && run.series
+        && Array.isArray(run.series[field])
+        && run.series[field].length === n
+      ) {
+        out.push(run.series[field]);
+      } else {
+        out.push(hidden);
+      }
+    }
+    return out;
+  }
+
+  function renderSavedRunsList() {
+    refreshSavedRunsStatus();
+    if (!savedRunsList) return;
+    if (!savedRuns.length) {
+      savedRunsList.innerHTML = '<div class="formula">No saved runs yet.</div>';
+      return;
+    }
+
+    const rows = savedRuns.map(function (run, idx) {
+      const activeText = runMatchesCurrentView(run) ? 'replayed for current view' : 'needs recompute for current view';
+      const recomputeText = formatClockTime(run.lastRecomputedAt);
+      const tpsText = Number.isFinite(run.tps) ? formatNum(run.tps, 3) : 'n/a';
+      const paramsJson = htmlEscape(JSON.stringify(run.params, null, 2));
+      const slotColor = SAVED_RUN_COLORS[idx % SAVED_RUN_COLORS.length];
+      return `
+        <div class="saved-run" data-run-id="${run.id}">
+          <div class="saved-run-head">
+            <span class="saved-run-swatch" style="background:${slotColor};"></span>
+            <strong>Run #${run.id}</strong>
+            <span>TPS ${tpsText}</span>
+            <label><input type="checkbox" data-action="toggle" data-run-id="${run.id}" ${run.visible ? 'checked' : ''}/> show</label>
+            <button data-action="delete" data-run-id="${run.id}">Delete</button>
+          </div>
+          <div class="saved-run-meta">
+            ${htmlEscape(run.datasetId)} | blocks ${run.minBlock.toLocaleString()}-${run.maxBlock.toLocaleString()} | ${activeText} | recomputed ${recomputeText}
+          </div>
+          <details>
+            <summary>Full params</summary>
+            <pre>${paramsJson}</pre>
+          </details>
+        </div>
+      `;
+    });
+    savedRunsList.innerHTML = rows.join('');
+  }
+
+  function deleteSavedRun(runId) {
+    savedRuns = savedRuns.filter(function (r) { return r.id !== runId; });
+    renderSavedRunsList();
+    refreshComparisonPlots();
+    setSavedRunsActionText(`Deleted run #${runId}.`);
+  }
+
+  function clearSavedRuns() {
+    savedRuns = [];
+    renderSavedRunsList();
+    refreshComparisonPlots();
+    setSavedRunsActionText('Cleared saved runs.');
+  }
+
+  function toggleCurrentRunView() {
+    showCurrentRun = !showCurrentRun;
+    syncCurrentRunButtonLabel();
+    refreshComparisonPlots();
+    if (showCurrentRun) {
+      setStatus('Current run is visible.');
+    } else {
+      setStatus('Current run hidden. Showing saved runs only.');
+    }
+  }
+
+  function saveCurrentRun() {
+    const snap = currentRunSnapshot;
+    const range = currentRangeSnapshot();
+    if (!snap || !range) {
+      setStatus('No computed run to save. Recompute first.');
+      return;
+    }
+    if (
+      snap.datasetId !== activeDatasetId
+      || snap.minBlock !== range.minBlock
+      || snap.maxBlock !== range.maxBlock
+    ) {
+      setStatus('Current computed results do not match selected range. Recompute then save.');
+      return;
+    }
+
+    const runId = ++savedRunSeq;
+    const rangeInfo = currentRangeIndices();
+    const run = {
+      id: runId,
+      visible: true,
+      datasetId: snap.datasetId,
+      minBlock: rangeInfo ? rangeInfo.minB : snap.minBlock,
+      maxBlock: rangeInfo ? rangeInfo.maxB : snap.maxBlock,
+      lastRecomputedAt: Date.now(),
+      tps: snap.tps,
+      params: snap.params,
+      series: {
+        chargedFee: snap.series.chargedFee.slice(),
+        vault: snap.series.vault.slice(),
+      }
+    };
+    if (rangeInfo) {
+      run.series = replaySavedRunForRange(run, rangeInfo);
+    }
+
+    let evicted = null;
+    if (savedRuns.length >= MAX_SAVED_RUNS) {
+      evicted = savedRuns.shift();
+    }
+    savedRuns.push(run);
+    renderSavedRunsList();
+    refreshComparisonPlots();
+
+    if (evicted) {
+      setStatus(`Saved run #${run.id}. Removed oldest run #${evicted.id} (cap ${MAX_SAVED_RUNS}).`);
+    } else {
+      setStatus(`Saved run #${run.id} (TPS ${formatNum(run.tps, 3)}).`);
+    }
+    setSavedRunsActionText(`Saved run #${run.id}.`);
+  }
+
+  function refreshComparisonPlots() {
+    if (!blocks.length) return;
+    const n = blocks.length;
+    if (!derivedChargedFeeGwei.length || !derivedVaultEth.length) {
+      renderSavedRunsList();
+      return;
+    }
+
+    const hidden = new Array(n).fill(null);
+    const currentCharged = showCurrentRun ? derivedChargedFeeGwei : hidden;
+    const currentVault = showCurrentRun ? derivedVaultEth : hidden;
+    const compareCharged = overlaySeriesForRuns('chargedFee', n);
+    const compareVault = overlaySeriesForRuns('vault', n);
+
+    if (requiredFeePlot) {
+      requiredFeePlot.setData([
+        blocks,
+        derivedGasFeeComponentGwei,
+        derivedBlobFeeComponentGwei,
+        currentCharged,
+        ...compareCharged
+      ]);
+    }
+
+    if (chargedFeeOnlyPlot) {
+      chargedFeeOnlyPlot.setData([
+        blocks,
+        currentCharged,
+        ...compareCharged
+      ]);
+    }
+
+    if (vaultPlot) {
+      vaultPlot.setData([
+        blocks,
+        derivedVaultTargetEth,
+        currentVault,
+        ...compareVault
+      ]);
+    }
+
+    renderSavedRunsList();
+  }
 
   function setSweepUiState(running) {
     sweepRunning = running;
@@ -1401,6 +1915,10 @@
     const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
     const feeMechanism = currentFeeMechanism();
     const controllerMode = controllerModeInput.value || 'ff';
+    const eip1559Denominator = Math.max(
+      1,
+      parsePositiveInt(eip1559DenominatorInput, DEFAULT_EIP1559_DENOMINATOR)
+    );
     const arbInitialPriceGwei = parsePositive(arbInitialPriceGweiInput, DEFAULT_ARB_INITIAL_PRICE_GWEI);
     const arbInertia = Math.max(1, parsePositiveInt(arbInertiaInput, DEFAULT_ARB_INERTIA));
     const arbEquilUnits = Math.max(1, parsePositive(arbEquilUnitsInput, DEFAULT_ARB_EQUIL_UNITS));
@@ -1415,7 +1933,7 @@
     const iMaxRaw = parseNumber(iMaxInput, 5);
     const iMin = Math.min(iMinRaw, iMaxRaw);
     const iMax = Math.max(iMinRaw, iMaxRaw);
-    const minFeeGwei = parsePositive(minFeeGweiInput, 0);
+    const minFeeGwei = parsePositive(minFeeGweiInput, 0.01);
     const maxFeeGwei = parsePositive(maxFeeGweiInput, 1);
     const initialVaultEth = parsePositive(initialVaultEthInput, 0);
     const targetVaultEth = parsePositive(targetVaultEthInput, 0);
@@ -1455,6 +1973,52 @@
     const modeUsesP = modeFlags.usesP;
     const modeUsesI = modeFlags.usesI;
     const modeUsesD = modeFlags.usesD;
+    const runParams = {
+      postEveryBlocks,
+      l2GasPerL2Block,
+      l2Tps: currentTpsSnapshot(),
+      l2BlockTimeSec,
+      l2GasScenario,
+      l2DemandRegime,
+      l1GasUsed,
+      blobMode,
+      fixedNumBlobs,
+      blobModel: {
+        txGas: blobModel.txGas,
+        txBytes: blobModel.txBytes,
+        batchOverheadBytes: blobModel.batchOverheadBytes,
+        compressionRatio: blobModel.compressionRatio,
+        blobUtilization: blobModel.blobUtilization,
+        minBlobsPerProposal: blobModel.minBlobsPerProposal
+      },
+      priorityFeeGwei,
+      feeMechanism,
+      controllerMode,
+      autoAlphaEnabled,
+      alphaGas,
+      alphaBlob,
+      kp,
+      pTermMinGwei,
+      ki,
+      kd,
+      iMin,
+      iMax,
+      dffBlocks,
+      dfbBlocks,
+      derivBeta,
+      minFeeGwei,
+      maxFeeGwei,
+      initialVaultEth,
+      targetVaultEth,
+      eip1559: {
+        maxChangeDenominator: eip1559Denominator
+      },
+      arbitrum: {
+        initialPriceGwei: arbInitialPriceGwei,
+        inertia: arbInertia,
+        equilUnits: arbEquilUnits
+      }
+    };
 
     derivedL2GasPerL1BlockText.textContent =
       `${formatNum(l2GasPerL1BlockBase, 0)} gas/L1 block (base), ` +
@@ -1504,6 +2068,7 @@
     let integralState = 0;
     let epsilonPrev = 0;
     let derivFiltered = 0;
+    let eip1559FeeWeiPerL2Gas = minFeeWei;
     let arbPriceGwei = clampNum(arbInitialPriceGwei, minFeeGwei, maxFeeGwei);
     let arbLastSurplusEth = initialVaultEth - targetVaultEth;
 
@@ -1563,7 +2128,7 @@
           minFeeWei,
           Math.min(maxFeeWei, feedforwardWei + feedbackWei)
         );
-      } else {
+      } else if (feeMechanism === 'arbitrum') {
         integralState = 0;
         derivFiltered = 0;
         const arbRawFeeWeiPerL2Gas = Math.max(0, arbPriceGwei * 1e9);
@@ -1571,6 +2136,10 @@
           minFeeWei,
           Math.min(maxFeeWei, arbRawFeeWeiPerL2Gas)
         );
+      } else {
+        integralState = 0;
+        derivFiltered = 0;
+        chargedFeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
       }
 
       let clampState = 'none';
@@ -1631,6 +2200,18 @@
             arbPriceGwei = Math.max(0, arbPriceGwei + priceChangeGwei);
           }
           arbLastSurplusEth = surplusEth;
+        } else if (feeMechanism === 'eip1559') {
+          if (targetVaultEth > 0) {
+            let errorRatio = (targetVaultEth - vault) / targetVaultEth;
+            errorRatio = clampNum(errorRatio, -8, 1);
+            const adjustmentFactor = 1 + (errorRatio / eip1559Denominator);
+            const nextFeeWeiPerL2Gas = eip1559FeeWeiPerL2Gas * adjustmentFactor;
+            if (Number.isFinite(nextFeeWeiPerL2Gas)) {
+              eip1559FeeWeiPerL2Gas = clampNum(nextFeeWeiPerL2Gas, minFeeWei, maxFeeWei);
+            }
+          } else {
+            eip1559FeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
+          }
         }
       } else {
         derivedPostingRevenueAtPostEth[i] = null;
@@ -1658,13 +2239,6 @@
         proposalPnLValues,
         new Array(proposalPnLValues.length).fill(0)
       ]);
-      requiredFeePlot.setData([
-        blocks,
-        derivedGasFeeComponentGwei,
-        derivedBlobFeeComponentGwei,
-        derivedChargedFeeGwei
-      ]);
-      chargedFeeOnlyPlot.setData([blocks, derivedChargedFeeGwei]);
       controllerPlot.setData([
         blocks,
         derivedFeedforwardFeeGwei,
@@ -1681,12 +2255,25 @@
         derivedDerivative,
         derivedIntegral
       ]);
-      vaultPlot.setData([blocks, derivedVaultTargetEth, derivedVaultEth]);
+      refreshComparisonPlots();
 
       if (preservedRange) {
         applyRange(preservedRange[0], preservedRange[1], null);
       }
     }
+
+    const runRange = currentRangeSnapshot() || { minBlock: MIN_BLOCK, maxBlock: MAX_BLOCK };
+    currentRunSnapshot = {
+      datasetId: activeDatasetId,
+      minBlock: runRange.minBlock,
+      maxBlock: runRange.maxBlock,
+      tps: currentTpsSnapshot(),
+      params: runParams,
+      series: {
+        chargedFee: derivedChargedFeeGwei.slice(),
+        vault: derivedVaultEth.slice()
+      }
+    };
 
     const lastIdx = n - 1;
     latestPostingCost.textContent = `${formatNum(derivedPostingCostEth[lastIdx], 6)} ETH`;
@@ -1697,19 +2284,19 @@
       latestBlobComponentFee.textContent = 'n/a';
       latestL2GasUsed.textContent = 'n/a';
     } else {
-      latestRequiredFee.textContent = `${formatNum(derivedRequiredFeeGwei[lastIdx], 4)} gwei/L2gas`;
-      latestChargedFee.textContent = `${formatNum(derivedChargedFeeGwei[lastIdx], 4)} gwei/L2gas`;
-      latestGasComponentFee.textContent = `${formatNum(derivedGasFeeComponentGwei[lastIdx], 4)} gwei/L2gas`;
-      latestBlobComponentFee.textContent = `${formatNum(derivedBlobFeeComponentGwei[lastIdx], 4)} gwei/L2gas`;
+      latestRequiredFee.textContent = formatFeeGwei(derivedRequiredFeeGwei[lastIdx]);
+      latestChargedFee.textContent = formatFeeGwei(derivedChargedFeeGwei[lastIdx]);
+      latestGasComponentFee.textContent = formatFeeGwei(derivedGasFeeComponentGwei[lastIdx]);
+      latestBlobComponentFee.textContent = formatFeeGwei(derivedBlobFeeComponentGwei[lastIdx]);
       latestL2GasUsed.textContent = `${formatNum(derivedL2GasPerL2Block[lastIdx], 0)} gas/L2 block`;
     }
     latestDeficitEth.textContent = `${formatNum(derivedDeficitEth[lastIdx], 6)} ETH`;
     latestEpsilon.textContent = `${formatNum(derivedEpsilon[lastIdx], 6)}`;
     latestDerivative.textContent = `${formatNum(derivedDerivative[lastIdx], 6)}`;
     latestIntegral.textContent = `${formatNum(derivedIntegral[lastIdx], 6)}`;
-    latestFfTerm.textContent = `${formatNum(derivedFeedforwardFeeGwei[lastIdx], 4)} gwei/L2gas`;
-    latestDTerm.textContent = `${formatNum(derivedDTermFeeGwei[lastIdx], 4)} gwei/L2gas`;
-    latestFbTerm.textContent = `${formatNum(derivedFeedbackFeeGwei[lastIdx], 4)} gwei/L2gas`;
+    latestFfTerm.textContent = formatFeeGwei(derivedFeedforwardFeeGwei[lastIdx]);
+    latestDTerm.textContent = formatFeeGwei(derivedDTermFeeGwei[lastIdx]);
+    latestFbTerm.textContent = formatFeeGwei(derivedFeedbackFeeGwei[lastIdx]);
     latestClampState.textContent = derivedClampState[lastIdx];
     latestVaultValue.textContent = `${formatNum(derivedVaultEth[lastIdx], 6)} ETH`;
     latestVaultGap.textContent = `${formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)} ETH`;
@@ -2176,7 +2763,7 @@
     const iMaxRaw = parseNumber(iMaxInput, 5);
     const iMin = Math.min(iMinRaw, iMaxRaw);
     const iMax = Math.max(iMinRaw, iMaxRaw);
-    const minFeeWei = parsePositive(minFeeGweiInput, 0) * 1e9;
+    const minFeeWei = parsePositive(minFeeGweiInput, 0.01) * 1e9;
     const maxFeeGwei = parsePositive(maxFeeGweiInput, 1.0);
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
     const pTermMinWei = pTermMinGwei * 1e9;
@@ -2465,17 +3052,26 @@
   }
 
   function makeRequiredFeeOpts(width, height) {
+    const series = [
+      { value: function (u, v) { return formatBlockWithApprox(v); } },
+      { label: 'Gas component fee (gwei/L2 gas)', stroke: '#2563eb', width: 1 },
+      { label: 'Blob component fee (gwei/L2 gas)', stroke: '#ea580c', width: 1 },
+      { label: 'Charged fee (clamped total)', stroke: '#16a34a', width: 1.4 }
+    ];
+    for (let i = 0; i < MAX_SAVED_RUNS; i++) {
+      series.push({
+        label: `Saved run ${i + 1} charged fee`,
+        stroke: SAVED_RUN_COLORS[i % SAVED_RUN_COLORS.length],
+        width: 1.1,
+        dash: [6, 4]
+      });
+    }
     return {
       title: 'L2 Fee Components (feedforward + clamped total)',
       width,
       height,
       scales: { x: { time: false } },
-      series: [
-        { value: function (u, v) { return formatBlockWithApprox(v); } },
-        { label: 'Gas component fee (gwei/L2 gas)', stroke: '#2563eb', width: 1 },
-        { label: 'Blob component fee (gwei/L2 gas)', stroke: '#ea580c', width: 1 },
-        { label: 'Charged fee (clamped total)', stroke: '#16a34a', width: 1.4 }
-      ],
+      series,
       axes: [
         { label: 'L1 Block Number' },
         { label: 'gwei / L2 gas' }
@@ -2491,15 +3087,24 @@
   }
 
   function makeChargedFeeOnlyOpts(width, height) {
+    const series = [
+      { value: function (u, v) { return formatBlockWithApprox(v); } },
+      { label: 'Charged fee (gwei/L2 gas)', stroke: '#16a34a', width: 1.4 }
+    ];
+    for (let i = 0; i < MAX_SAVED_RUNS; i++) {
+      series.push({
+        label: `Saved run ${i + 1} charged fee`,
+        stroke: SAVED_RUN_COLORS[i % SAVED_RUN_COLORS.length],
+        width: 1.1,
+        dash: [6, 4]
+      });
+    }
     return {
       title: 'L2 Charged Fee (clamped total only)',
       width,
       height,
       scales: { x: { time: false } },
-      series: [
-        { value: function (u, v) { return formatBlockWithApprox(v); } },
-        { label: 'Charged fee (gwei/L2 gas)', stroke: '#16a34a', width: 1.4 }
-      ],
+      series,
       axes: [
         { label: 'L1 Block Number' },
         { label: 'gwei / L2 gas' }
@@ -2515,16 +3120,25 @@
   }
 
   function makeVaultOpts(width, height) {
+    const series = [
+      { value: function (u, v) { return formatBlockWithApprox(v); } },
+      { label: 'Target vault (ETH)', stroke: '#dc2626', width: 1 },
+      { label: 'Current vault (ETH)', stroke: '#0f766e', width: 1.4 }
+    ];
+    for (let i = 0; i < MAX_SAVED_RUNS; i++) {
+      series.push({
+        label: `Saved run ${i + 1} vault`,
+        stroke: SAVED_RUN_COLORS[i % SAVED_RUN_COLORS.length],
+        width: 1.1,
+        dash: [6, 4]
+      });
+    }
     return {
       title: 'Vault Value vs Target',
       width,
       height,
       scales: { x: { time: false } },
-      series: [
-        { value: function (u, v) { return formatBlockWithApprox(v); } },
-        { label: 'Target vault (ETH)', stroke: '#dc2626', width: 1 },
-        { label: 'Current vault (ETH)', stroke: '#0f766e', width: 1.4 }
-      ],
+      series,
       axes: [
         { label: 'L1 Block Number' },
         { label: 'ETH' }
@@ -2676,9 +3290,13 @@
 
   function applyRange(minVal, maxVal, sourcePlot) {
     if (!datasetReady || !blocks.length) return;
-    const prevMin = Number(minInput.value);
-    const prevMax = Number(maxInput.value);
+    const prevRange = activeDatasetId && Array.isArray(datasetRangeById[activeDatasetId])
+      ? datasetRangeById[activeDatasetId]
+      : [Number(minInput.value), Number(maxInput.value)];
+    const prevMin = Number(prevRange[0]);
+    const prevMax = Number(prevRange[1]);
     const [minB, maxB] = clampRange(minVal, maxVal);
+
     const rangeChanged = !Number.isFinite(prevMin) || !Number.isFinite(prevMax) || prevMin !== minB || prevMax !== maxB;
     minInput.value = minB;
     maxInput.value = maxB;
@@ -2691,9 +3309,12 @@
       if (p !== sourcePlot) p.setScale('x', { min: minB, max: maxB });
     }
     syncing = false;
+    if (rangeChanged) rerunSavedRunsForCurrentRange();
     if (rangeChanged) resetSweepState('range changed');
     markScoreStale('range changed');
     refreshRangePresetSelection();
+    renderSavedRunsList();
+    refreshComparisonPlots();
   }
 
   function resizePlots() {
@@ -2763,13 +3384,13 @@
 
   requiredFeePlot = new uPlot(
     makeRequiredFeeOpts(width, 320),
-    [[], [], [], []],
+    Array.from({ length: 4 + MAX_SAVED_RUNS }, function () { return []; }),
     reqWrap
   );
 
   chargedFeeOnlyPlot = new uPlot(
     makeChargedFeeOnlyOpts(width, 320),
-    [[], []],
+    Array.from({ length: 2 + MAX_SAVED_RUNS }, function () { return []; }),
     chargedOnlyWrap
   );
 
@@ -2787,7 +3408,7 @@
 
   vaultPlot = new uPlot(
     makeVaultOpts(width, 320),
-    [[], [], []],
+    Array.from({ length: 3 + MAX_SAVED_RUNS }, function () { return []; }),
     vaultWrap
   );
 
@@ -2832,6 +3453,56 @@
   document.getElementById('recalcBtn').addEventListener('click', function () {
     scheduleRecalc('Recomputing derived charts...');
   });
+
+  if (saveRunBtn) {
+    saveRunBtn.addEventListener('click', function () {
+      saveCurrentRun();
+    });
+  }
+
+  if (toggleCurrentRunBtn) {
+    toggleCurrentRunBtn.addEventListener('click', function () {
+      toggleCurrentRunView();
+    });
+  }
+
+  if (clearSavedRunsBtn) {
+    clearSavedRunsBtn.addEventListener('click', function () {
+      clearSavedRuns();
+    });
+  }
+
+  if (recomputeSavedRunsBtn) {
+    recomputeSavedRunsBtn.addEventListener('click', function () {
+      recomputeSavedRunsNow();
+    });
+  }
+
+  if (savedRunsList) {
+    savedRunsList.addEventListener('click', function (e) {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const action = target.getAttribute('data-action');
+      if (action !== 'delete') return;
+      const runId = Number(target.getAttribute('data-run-id'));
+      if (!Number.isFinite(runId)) return;
+      deleteSavedRun(runId);
+    });
+
+    savedRunsList.addEventListener('change', function (e) {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const action = target.getAttribute('data-action');
+      if (action !== 'toggle') return;
+      const runId = Number(target.getAttribute('data-run-id'));
+      if (!Number.isFinite(runId)) return;
+      const run = savedRuns.find(function (r) { return r.id === runId; });
+      if (!run) return;
+      run.visible = Boolean(target.checked);
+      renderSavedRunsList();
+      refreshComparisonPlots();
+    });
+  }
 
   if (scoreBtn) {
     scoreBtn.addEventListener('click', function () {
@@ -3001,9 +3672,9 @@
     }
   });
 
-  [
-    postEveryBlocksInput,
-    l2GasPerL2BlockInput,
+    [
+      postEveryBlocksInput,
+      l2GasPerL2BlockInput,
     l2BlockTimeSecInput,
     l2GasScenarioInput,
     l2DemandRegimeInput,
@@ -3017,11 +3688,12 @@
     blobUtilizationInput,
     minBlobsPerProposalInput,
     priorityFeeGweiInput,
-    alphaGasInput,
-    alphaBlobInput,
-    arbInitialPriceGweiInput,
-    arbInertiaInput,
-    arbEquilUnitsInput,
+      alphaGasInput,
+      alphaBlobInput,
+      eip1559DenominatorInput,
+      arbInitialPriceGweiInput,
+      arbInertiaInput,
+      arbEquilUnitsInput,
     dffBlocksInput,
     dfbBlocksInput,
     dSmoothBetaInput,
@@ -3116,6 +3788,8 @@
   }
 
   markScoreStale('not computed yet');
+  renderSavedRunsList();
+  syncCurrentRunButtonLabel();
   syncFeeMechanismUi();
   syncBlobModeUi();
   initDatasets();
