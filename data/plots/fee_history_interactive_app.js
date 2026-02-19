@@ -574,7 +574,7 @@
       recalcDerivedSeries();
       clearParamsStale();
       applyRange(nextMin, nextMax, null);
-      if (savedRuns.length) {
+      if (savedRunManager.hasRuns()) {
         rerunSavedRunsForCurrentRange();
         renderSavedRunsList();
         refreshComparisonPlots();
@@ -803,6 +803,132 @@
       compressionRatio,
       blobUtilization,
       minBlobsPerProposal
+    };
+  }
+
+  function normalizeFeeMechanism(raw) {
+    if (raw === 'arbitrum') return 'arbitrum';
+    if (raw === 'eip1559') return 'eip1559';
+    return 'taiko';
+  }
+
+  function normalizeBlobModel(rawLike) {
+    const raw = rawLike || {};
+    return {
+      txGas: Math.max(1, Number(raw.txGas) || DEFAULT_TX_GAS),
+      txBytes: Math.max(0, Number(raw.txBytes) || DEFAULT_TX_BYTES),
+      batchOverheadBytes: Math.max(0, Number(raw.batchOverheadBytes) || DEFAULT_BATCH_OVERHEAD_BYTES),
+      compressionRatio: Math.max(1e-9, Number(raw.compressionRatio) || DEFAULT_COMPRESSION_RATIO),
+      blobUtilization: clampNum(Number(raw.blobUtilization) || DEFAULT_BLOB_UTILIZATION, 1e-9, 1),
+      minBlobsPerProposal: Math.max(0, Number(raw.minBlobsPerProposal) || DEFAULT_MIN_BLOBS_PER_PROPOSAL),
+    };
+  }
+
+  function normalizeRunParams(rawLike) {
+    const raw = rawLike || {};
+    const mechanism = normalizeFeeMechanism(raw.feeMechanism);
+    const blobMode = raw.blobMode === 'dynamic' ? 'dynamic' : 'fixed';
+    const blobModel = normalizeBlobModel(raw.blobModel);
+    const minFeeGwei = Math.max(0, Number(raw.minFeeGwei) || 0.01);
+    const maxFeeGwei = Math.max(minFeeGwei, Number(raw.maxFeeGwei) || 1.0);
+    const iMinRaw = Number(raw.iMin);
+    const iMaxRaw = Number(raw.iMax);
+    const iMin = Number.isFinite(iMinRaw) ? iMinRaw : 0;
+    const iMax = Number.isFinite(iMaxRaw) ? iMaxRaw : 10;
+    const eipCfg = raw.eip1559 || {};
+    const arbCfg = raw.arbitrum || {};
+    return {
+      postEveryBlocks: Math.max(1, Math.floor(Number(raw.postEveryBlocks) || 10)),
+      l2GasPerL2Block: Math.max(0, Number(raw.l2GasPerL2Block) || 0),
+      l2Tps: Number.isFinite(Number(raw.l2Tps)) ? Math.max(0, Number(raw.l2Tps)) : NaN,
+      l2BlockTimeSec: Math.max(0.1, Number(raw.l2BlockTimeSec) || 2),
+      l2GasScenario: raw.l2GasScenario || 'normal',
+      l2DemandRegime: raw.l2DemandRegime || 'base',
+      l1GasUsed: Math.max(0, Number(raw.l1GasUsed) || 0),
+      blobMode,
+      fixedNumBlobs: Math.max(0, Number(raw.fixedNumBlobs) || 0),
+      blobModel,
+      priorityFeeGwei: Math.max(0, Number(raw.priorityFeeGwei) || 0),
+      feeMechanism: mechanism,
+      controllerMode: raw.controllerMode || 'ff',
+      autoAlphaEnabled: raw.autoAlphaEnabled === true,
+      alphaGas: Math.max(0, Number(raw.alphaGas) || 0),
+      alphaBlob: Math.max(0, Number(raw.alphaBlob) || 0),
+      kp: Math.max(0, Number(raw.kp) || 0),
+      pTermMinGwei: Number(raw.pTermMinGwei) || 0,
+      ki: Math.max(0, Number(raw.ki) || 0),
+      kd: Math.max(0, Number(raw.kd) || 0),
+      iMin: Math.min(iMin, iMax),
+      iMax: Math.max(iMin, iMax),
+      dffBlocks: Math.max(0, Math.floor(Number(raw.dffBlocks) || 0)),
+      dfbBlocks: Math.max(0, Math.floor(Number(raw.dfbBlocks) || 0)),
+      derivBeta: clampNum(Number.isFinite(Number(raw.derivBeta)) ? Number(raw.derivBeta) : 0.8, 0, 1),
+      minFeeGwei,
+      maxFeeGwei,
+      initialVaultEth: Math.max(0, Number(raw.initialVaultEth) || 0),
+      targetVaultEth: Math.max(0, Number(raw.targetVaultEth) || 0),
+      eip1559: {
+        maxChangeDenominator: Math.max(
+          1,
+          Math.floor(Number(eipCfg.maxChangeDenominator) || DEFAULT_EIP1559_DENOMINATOR)
+        )
+      },
+      arbitrum: {
+        initialPriceGwei: Math.max(0, Number(arbCfg.initialPriceGwei) || DEFAULT_ARB_INITIAL_PRICE_GWEI),
+        inertia: Math.max(1, Math.floor(Number(arbCfg.inertia) || DEFAULT_ARB_INERTIA)),
+        equilUnits: Math.max(1, Number(arbCfg.equilUnits) || DEFAULT_ARB_EQUIL_UNITS),
+      }
+    };
+  }
+
+  function deriveDemandScalars(runParams) {
+    const demandMultiplier = DEMAND_MULTIPLIERS[runParams.l2DemandRegime] || 1.0;
+    const l2BlocksPerL1Block = runParams.l2BlockTimeSec > 0
+      ? (L1_BLOCK_TIME_SECONDS / runParams.l2BlockTimeSec)
+      : 0;
+    const l2GasPerL1BlockBase = runParams.l2GasPerL2Block * l2BlocksPerL1Block;
+    const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
+    const l2GasPerProposalBase = l2GasPerL1BlockBase * runParams.postEveryBlocks;
+    return {
+      demandMultiplier,
+      l2BlocksPerL1Block,
+      l2GasPerL1BlockBase,
+      l2GasPerL1BlockTarget,
+      l2GasPerProposalBase,
+    };
+  }
+
+  function buildCoreControllerConfig(runParams) {
+    const minFeeWei = runParams.minFeeGwei * 1e9;
+    const maxFeeWei = Math.max(minFeeWei, runParams.maxFeeGwei * 1e9);
+    return {
+      mechanism: runParams.feeMechanism,
+      controllerMode: runParams.controllerMode,
+      postEveryBlocks: runParams.postEveryBlocks,
+      l1GasUsed: runParams.l1GasUsed,
+      blobMode: runParams.blobMode,
+      fixedNumBlobs: runParams.fixedNumBlobs,
+      blobModel: runParams.blobModel,
+      priorityFeeWei: runParams.priorityFeeGwei * 1e9,
+      dffBlocks: runParams.dffBlocks,
+      dfbBlocks: runParams.dfbBlocks,
+      derivBeta: runParams.derivBeta,
+      kp: runParams.kp,
+      ki: runParams.ki,
+      kd: runParams.kd,
+      pTermMinWei: runParams.pTermMinGwei * 1e9,
+      iMin: runParams.iMin,
+      iMax: runParams.iMax,
+      minFeeWei,
+      maxFeeWei,
+      alphaGas: runParams.alphaGas,
+      alphaBlob: runParams.alphaBlob,
+      initialVaultEth: runParams.initialVaultEth,
+      targetVaultEth: runParams.targetVaultEth,
+      eip1559Denominator: runParams.eip1559.maxChangeDenominator,
+      arbInitialPriceGwei: runParams.arbitrum.initialPriceGwei,
+      arbInertia: runParams.arbitrum.inertia,
+      arbEquilUnits: runParams.arbitrum.equilUnits,
     };
   }
 
@@ -1240,9 +1366,7 @@
   let sweepScoredHistory = [];
   let sweepRunSeq = 0;
   let sweepPoints = [];
-  let savedRuns = [];
-  let savedRunSeq = 0;
-  let showCurrentRun = true;
+  const savedRunManager = createSavedRunManager();
   let currentRunSnapshot = null;
 
   function currentRangeSnapshot() {
@@ -1267,6 +1391,7 @@
   }
 
   function refreshSavedRunsStatus() {
+    const savedRuns = savedRunManager.getRuns();
     if (!savedRunsStatus) return;
     savedRunsStatus.textContent = `${savedRuns.length} / ${MAX_SAVED_RUNS} saved`;
     if (clearSavedRunsBtn) clearSavedRunsBtn.disabled = savedRuns.length === 0;
@@ -1329,66 +1454,159 @@
     };
   }
 
-  function saveSavedRunsToStorage() {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    try {
-      const payload = {
-        savedRunSeq: savedRunSeq,
-        showCurrentRun: showCurrentRun,
-        runs: savedRuns.map(function (run) {
-          return {
-            id: run.id,
-            visible: run.visible !== false,
-            solidLine: run.solidLine === true,
-            name: normalizeRunName(run.name),
-            datasetId: run.datasetId == null ? '' : String(run.datasetId),
-            minBlock: run.minBlock,
-            maxBlock: run.maxBlock,
-            lastRecomputedAt: run.lastRecomputedAt || 0,
-            tps: run.tps,
-            params: run.params,
-          };
-        })
-      };
-      window.localStorage.setItem(SAVED_RUNS_STORAGE_KEY, JSON.stringify(payload));
-    } catch (_) {
-      // Storage may be unavailable or full; keep in-memory behavior.
-    }
-  }
+  function createSavedRunManager() {
+    let runs = [];
+    let seq = 0;
+    let showCurrent = true;
 
-  function loadSavedRunsFromStorage() {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    try {
-      const raw = window.localStorage.getItem(SAVED_RUNS_STORAGE_KEY);
-      if (!raw) return;
-
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return;
-
-      const incomingRuns = Array.isArray(parsed.runs) ? parsed.runs : [];
-      const clippedRuns = incomingRuns.slice(-MAX_SAVED_RUNS);
-      const loadedRuns = [];
-      let maxId = 0;
-
-      for (const item of clippedRuns) {
-        const run = sanitizeSavedRun(item);
-        if (!run) continue;
-        loadedRuns.push(run);
-        if (run.id > maxId) maxId = run.id;
+    function persist() {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      try {
+        const payload = {
+          savedRunSeq: seq,
+          showCurrentRun: showCurrent,
+          runs: runs.map(function (run) {
+            return {
+              id: run.id,
+              visible: run.visible !== false,
+              solidLine: run.solidLine === true,
+              name: normalizeRunName(run.name),
+              datasetId: run.datasetId == null ? '' : String(run.datasetId),
+              minBlock: run.minBlock,
+              maxBlock: run.maxBlock,
+              lastRecomputedAt: run.lastRecomputedAt || 0,
+              tps: run.tps,
+              params: run.params,
+            };
+          })
+        };
+        window.localStorage.setItem(SAVED_RUNS_STORAGE_KEY, JSON.stringify(payload));
+      } catch (_) {
+        // Storage may be unavailable or full; keep in-memory behavior.
       }
-
-      savedRuns = loadedRuns;
-      const seqNum = Math.floor(Number(parsed.savedRunSeq));
-      savedRunSeq = Math.max(maxId, Number.isFinite(seqNum) ? seqNum : 0);
-      showCurrentRun = parsed.showCurrentRun !== false;
-    } catch (_) {
-      // Ignore bad storage payload and keep defaults.
     }
+
+    function loadFromStorage() {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      try {
+        const raw = window.localStorage.getItem(SAVED_RUNS_STORAGE_KEY);
+        if (!raw) return;
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return;
+
+        const incomingRuns = Array.isArray(parsed.runs) ? parsed.runs : [];
+        const clippedRuns = incomingRuns.slice(-MAX_SAVED_RUNS);
+        const loadedRuns = [];
+        let maxId = 0;
+
+        for (const item of clippedRuns) {
+          const run = sanitizeSavedRun(item);
+          if (!run) continue;
+          loadedRuns.push(run);
+          if (run.id > maxId) maxId = run.id;
+        }
+
+        runs = loadedRuns;
+        const seqNum = Math.floor(Number(parsed.savedRunSeq));
+        seq = Math.max(maxId, Number.isFinite(seqNum) ? seqNum : 0);
+        showCurrent = parsed.showCurrentRun !== false;
+      } catch (_) {
+        // Ignore bad storage payload and keep defaults.
+      }
+    }
+
+    function getRuns() {
+      return runs;
+    }
+
+    function hasRuns() {
+      return runs.length > 0;
+    }
+
+    function getShowCurrentRun() {
+      return showCurrent;
+    }
+
+    function toggleShowCurrentRun() {
+      showCurrent = !showCurrent;
+      persist();
+      return showCurrent;
+    }
+
+    function updateRunById(runId, updateFn) {
+      const run = runs.find(function (r) { return r.id === runId; });
+      if (!run) return false;
+      updateFn(run);
+      persist();
+      return true;
+    }
+
+    function deleteRun(runId) {
+      const before = runs.length;
+      runs = runs.filter(function (r) { return r.id !== runId; });
+      if (runs.length !== before) {
+        persist();
+        return true;
+      }
+      return false;
+    }
+
+    function clear() {
+      runs = [];
+      persist();
+    }
+
+    function addRun(run) {
+      const nextId = ++seq;
+      const fullRun = {
+        ...run,
+        id: nextId,
+      };
+      let evicted = null;
+      if (runs.length >= MAX_SAVED_RUNS) {
+        evicted = runs.shift();
+      }
+      runs.push(fullRun);
+      persist();
+      return { run: fullRun, evicted };
+    }
+
+    function recomputeForRange(rangeInfo, replayFn, datasetId) {
+      if (!rangeInfo || !runs.length) return 0;
+      let rerunCount = 0;
+      const nowTs = Date.now();
+      for (const run of runs) {
+        if (!run) continue;
+        run.series = replayFn(run, rangeInfo);
+        run.datasetId = datasetId;
+        run.minBlock = rangeInfo.minB;
+        run.maxBlock = rangeInfo.maxB;
+        run.lastRecomputedAt = nowTs;
+        rerunCount += 1;
+      }
+      if (rerunCount > 0) persist();
+      return rerunCount;
+    }
+
+    return {
+      loadFromStorage,
+      persist,
+      getRuns,
+      hasRuns,
+      getShowCurrentRun,
+      toggleShowCurrentRun,
+      updateRunById,
+      deleteRun,
+      clear,
+      addRun,
+      recomputeForRange,
+    };
   }
 
   function syncCurrentRunButtonLabel() {
     if (!toggleCurrentRunBtn) return;
-    toggleCurrentRunBtn.textContent = showCurrentRun ? 'Hide current run' : 'Show current run';
+    toggleCurrentRunBtn.textContent = savedRunManager.getShowCurrentRun() ? 'Hide current run' : 'Show current run';
   }
 
   function runMatchesCurrentView(run) {
@@ -1410,77 +1628,18 @@
       return { chargedFee: hidden.slice(), vault: hidden.slice() };
     }
 
-    const params = run.params;
-    const mechanism = params.feeMechanism === 'arbitrum'
-      ? 'arbitrum'
-      : (params.feeMechanism === 'eip1559' ? 'eip1559' : 'taiko');
-
-    const postEveryBlocks = Math.max(1, Math.floor(Number(params.postEveryBlocks) || 10));
-    const l2GasPerL2Block = Math.max(0, Number(params.l2GasPerL2Block) || 0);
-    const l2BlockTimeSec = Math.max(0.1, Number(params.l2BlockTimeSec) || 2);
-    const l2GasScenario = params.l2GasScenario || 'normal';
-    const l2DemandRegime = params.l2DemandRegime || 'base';
-    const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
-    const l1GasUsed = Math.max(0, Number(params.l1GasUsed) || 0);
-    const priorityFeeGwei = Math.max(0, Number(params.priorityFeeGwei) || 0);
-    const blobMode = params.blobMode === 'dynamic' ? 'dynamic' : 'fixed';
-    const fixedNumBlobs = Math.max(0, Number(params.fixedNumBlobs) || 0);
-    const blobModelRaw = params.blobModel || {};
-    const blobModel = {
-      txGas: Math.max(1, Number(blobModelRaw.txGas) || DEFAULT_TX_GAS),
-      txBytes: Math.max(0, Number(blobModelRaw.txBytes) || DEFAULT_TX_BYTES),
-      batchOverheadBytes: Math.max(0, Number(blobModelRaw.batchOverheadBytes) || DEFAULT_BATCH_OVERHEAD_BYTES),
-      compressionRatio: Math.max(1e-9, Number(blobModelRaw.compressionRatio) || DEFAULT_COMPRESSION_RATIO),
-      blobUtilization: clampNum(
-        Number(blobModelRaw.blobUtilization) || DEFAULT_BLOB_UTILIZATION,
-        1e-9,
-        1
-      ),
-      minBlobsPerProposal: Math.max(0, Number(blobModelRaw.minBlobsPerProposal) || DEFAULT_MIN_BLOBS_PER_PROPOSAL),
-    };
-
-    const alphaGas = Math.max(0, Number(params.alphaGas) || 0);
-    const alphaBlob = Math.max(0, Number(params.alphaBlob) || 0);
-    const kp = Math.max(0, Number(params.kp) || 0);
-    const ki = Math.max(0, Number(params.ki) || 0);
-    const kd = Math.max(0, Number(params.kd) || 0);
-    const derivBetaRaw = Number(params.derivBeta);
-    const derivBeta = clampNum(Number.isFinite(derivBetaRaw) ? derivBetaRaw : 0.8, 0, 1);
-    const dffBlocks = Math.max(0, Math.floor(Number(params.dffBlocks) || 0));
-    const dfbBlocks = Math.max(0, Math.floor(Number(params.dfbBlocks) || 0));
-    const pTermMinGwei = Number(params.pTermMinGwei) || 0;
-    const minFeeGwei = Math.max(0, Number(params.minFeeGwei) || 0.01);
-    const maxFeeGwei = Math.max(minFeeGwei, Number(params.maxFeeGwei) || 1.0);
-    const initialVaultEth = Math.max(0, Number(params.initialVaultEth) || 0);
-    const targetVaultEth = Math.max(0, Number(params.targetVaultEth) || 0);
-    const iMinRaw = Number(params.iMin);
-    const iMaxRaw = Number(params.iMax);
-    const iMin = Number.isFinite(iMinRaw) ? iMinRaw : 0;
-    const iMax = Number.isFinite(iMaxRaw) ? iMaxRaw : 10;
-
-    const eipCfg = params.eip1559 || {};
-    const eip1559Denominator = Math.max(
-      1,
-      Math.floor(Number(eipCfg.maxChangeDenominator) || DEFAULT_EIP1559_DENOMINATOR)
+    const runParams = normalizeRunParams(run.params);
+    const demandScalars = deriveDemandScalars(runParams);
+    const localGasSeries = buildL2GasSeries(
+      rangeInfo.n,
+      demandScalars.l2GasPerL1BlockTarget,
+      runParams.l2GasScenario
     );
-    const arbCfg = params.arbitrum || {};
-    const arbInitialPriceGwei = Math.max(0, Number(arbCfg.initialPriceGwei) || DEFAULT_ARB_INITIAL_PRICE_GWEI);
-    const arbInertia = Math.max(1, Math.floor(Number(arbCfg.inertia) || DEFAULT_ARB_INERTIA));
-    const arbEquilUnits = Math.max(1, Number(arbCfg.equilUnits) || DEFAULT_ARB_EQUIL_UNITS);
-
-    const l2BlocksPerL1Block = L1_BLOCK_TIME_SECONDS / l2BlockTimeSec;
-    const l2GasPerL1Target = l2GasPerL2Block * l2BlocksPerL1Block * demandMultiplier;
-    const localGasSeries = buildL2GasSeries(rangeInfo.n, l2GasPerL1Target, l2GasScenario);
     const baseFeeSlice = baseFeeGwei.slice(rangeInfo.i0, rangeInfo.i1 + 1);
     const blobFeeSlice = blobFeeGwei.slice(rangeInfo.i0, rangeInfo.i1 + 1);
-
-    const priorityFeeWei = priorityFeeGwei * 1e9;
-    const minFeeWei = minFeeGwei * 1e9;
-    const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
-    const pTermMinWei = pTermMinGwei * 1e9;
+    const controllerCfg = buildCoreControllerConfig(runParams);
     const replay = simCore.simulateSeries({
-      mechanism,
-      controllerMode: params.controllerMode || 'ff',
+      ...controllerCfg,
       baseFeeGwei: baseFeeSlice,
       blobFeeGwei: blobFeeSlice,
       l2GasPerL1BlockSeries: localGasSeries,
@@ -1488,31 +1647,6 @@
       rangeStart: 0,
       rangeEnd: rangeInfo.n - 1,
       blockIndexOffset: rangeInfo.i0,
-      postEveryBlocks,
-      l1GasUsed,
-      blobMode,
-      fixedNumBlobs,
-      blobModel,
-      priorityFeeWei,
-      dffBlocks,
-      dfbBlocks,
-      derivBeta,
-      kp,
-      ki,
-      kd,
-      pTermMinWei,
-      iMin,
-      iMax,
-      minFeeWei,
-      maxFeeWei,
-      alphaGas,
-      alphaBlob,
-      initialVaultEth,
-      targetVaultEth,
-      eip1559Denominator,
-      arbInitialPriceGwei,
-      arbInertia,
-      arbEquilUnits,
       collectBreakdown: false
     });
 
@@ -1528,24 +1662,11 @@
 
   function rerunSavedRunsForCurrentRange() {
     const rangeInfo = currentRangeIndices();
-    if (!rangeInfo || !savedRuns.length) return 0;
-    let rerunCount = 0;
-    const nowTs = Date.now();
-    for (const run of savedRuns) {
-      if (!run) continue;
-      run.series = replaySavedRunForRange(run, rangeInfo);
-      run.datasetId = activeDatasetId;
-      run.minBlock = rangeInfo.minB;
-      run.maxBlock = rangeInfo.maxB;
-      run.lastRecomputedAt = nowTs;
-      rerunCount += 1;
-    }
-    if (rerunCount > 0) saveSavedRunsToStorage();
-    return rerunCount;
+    return savedRunManager.recomputeForRange(rangeInfo, replaySavedRunForRange, activeDatasetId);
   }
 
   function recomputeSavedRunsNow() {
-    if (!savedRuns.length) {
+    if (!savedRunManager.hasRuns()) {
       setSavedRunsActionText('No saved runs to recompute.');
       setStatus('No saved runs to recompute.');
       return;
@@ -1566,6 +1687,7 @@
   }
 
   function overlaySeriesForRuns(field, n) {
+    const savedRuns = savedRunManager.getRuns();
     const hidden = new Array(n).fill(null);
     const out = [];
     for (let i = 0; i < MAX_SAVED_RUNS; i++) {
@@ -1587,6 +1709,7 @@
   }
 
   function syncSavedRunSeriesPresentation() {
+    const savedRuns = savedRunManager.getRuns();
     const applyToPlot = function (plot, startIndex, metricLabel) {
       if (!plot || !Array.isArray(plot.series)) return;
       let needsRedraw = false;
@@ -1659,6 +1782,7 @@
   }
 
   function renderSavedRunsList() {
+    const savedRuns = savedRunManager.getRuns();
     refreshSavedRunsStatus();
     if (!savedRunsList) return;
     if (!savedRuns.length) {
@@ -1699,24 +1823,21 @@
   }
 
   function deleteSavedRun(runId) {
-    savedRuns = savedRuns.filter(function (r) { return r.id !== runId; });
-    saveSavedRunsToStorage();
+    savedRunManager.deleteRun(runId);
     renderSavedRunsList();
     refreshComparisonPlots();
     setSavedRunsActionText(`Deleted run #${runId}.`);
   }
 
   function clearSavedRuns() {
-    savedRuns = [];
-    saveSavedRunsToStorage();
+    savedRunManager.clear();
     renderSavedRunsList();
     refreshComparisonPlots();
     setSavedRunsActionText('Cleared saved runs.');
   }
 
   function toggleCurrentRunView() {
-    showCurrentRun = !showCurrentRun;
-    saveSavedRunsToStorage();
+    const showCurrentRun = savedRunManager.toggleShowCurrentRun();
     syncCurrentRunButtonLabel();
     refreshComparisonPlots();
     if (showCurrentRun) {
@@ -1742,10 +1863,8 @@
       return;
     }
 
-    const runId = ++savedRunSeq;
     const rangeInfo = currentRangeIndices();
     const run = {
-      id: runId,
       visible: true,
       solidLine: false,
       name: '',
@@ -1763,25 +1882,23 @@
     if (rangeInfo) {
       run.series = replaySavedRunForRange(run, rangeInfo);
     }
-
-    let evicted = null;
-    if (savedRuns.length >= MAX_SAVED_RUNS) {
-      evicted = savedRuns.shift();
-    }
-    savedRuns.push(run);
+    const saved = savedRunManager.addRun(run);
     renderSavedRunsList();
     refreshComparisonPlots();
 
+    const runId = saved.run.id;
+    const evicted = saved.evicted;
     if (evicted) {
-      setStatus(`Saved run #${run.id}. Removed oldest run #${evicted.id} (cap ${MAX_SAVED_RUNS}).`);
+      setStatus(`Saved run #${runId}. Removed oldest run #${evicted.id} (cap ${MAX_SAVED_RUNS}).`);
     } else {
-      setStatus(`Saved run #${run.id} (TPS ${formatNum(run.tps, 3)}).`);
+      setStatus(`Saved run #${runId} (TPS ${formatNum(run.tps, 3)}).`);
     }
-    saveSavedRunsToStorage();
-    setSavedRunsActionText(`Saved run #${run.id}.`);
+    setSavedRunsActionText(`Saved run #${runId}.`);
   }
 
   function refreshComparisonPlots() {
+    const savedRuns = savedRunManager.getRuns();
+    const showCurrentRun = savedRunManager.getShowCurrentRun();
     if (!blocks.length) return;
     const n = blocks.length;
     if (!derivedChargedFeeGwei.length || !derivedVaultEth.length) {
@@ -1794,33 +1911,9 @@
     const currentVault = showCurrentRun ? derivedVaultEth : hidden;
     const compareCharged = overlaySeriesForRuns('chargedFee', n);
     const compareVault = overlaySeriesForRuns('vault', n);
-    if (requiredFeePlot && typeof requiredFeePlot.setSeries === 'function') {
-      requiredFeePlot.setSeries(3, { show: showCurrentRun });
-      const requiredLegendRows = requiredFeePlot.root?.querySelectorAll
-        ? requiredFeePlot.root.querySelectorAll('.u-legend .u-series')
-        : null;
-      if (requiredLegendRows && requiredLegendRows[3] && requiredLegendRows[3].style) {
-        requiredLegendRows[3].style.display = showCurrentRun ? '' : 'none';
-      }
-    }
-    if (chargedFeeOnlyPlot && typeof chargedFeeOnlyPlot.setSeries === 'function') {
-      chargedFeeOnlyPlot.setSeries(1, { show: showCurrentRun });
-      const chargedLegendRows = chargedFeeOnlyPlot.root?.querySelectorAll
-        ? chargedFeeOnlyPlot.root.querySelectorAll('.u-legend .u-series')
-        : null;
-      if (chargedLegendRows && chargedLegendRows[1] && chargedLegendRows[1].style) {
-        chargedLegendRows[1].style.display = showCurrentRun ? '' : 'none';
-      }
-    }
-    if (vaultPlot && typeof vaultPlot.setSeries === 'function') {
-      vaultPlot.setSeries(2, { show: showCurrentRun });
-      const vaultLegendRows = vaultPlot.root?.querySelectorAll
-        ? vaultPlot.root.querySelectorAll('.u-legend .u-series')
-        : null;
-      if (vaultLegendRows && vaultLegendRows[2] && vaultLegendRows[2].style) {
-        vaultLegendRows[2].style.display = showCurrentRun ? '' : 'none';
-      }
-    }
+    setLegendSeriesVisibility(requiredFeePlot, 3, showCurrentRun);
+    setLegendSeriesVisibility(chargedFeeOnlyPlot, 1, showCurrentRun);
+    setLegendSeriesVisibility(vaultPlot, 2, showCurrentRun);
     syncSavedRunSeriesPresentation();
 
     if (requiredFeePlot) {
@@ -1851,6 +1944,16 @@
     }
 
     renderSavedRunsList();
+  }
+
+  function setLegendSeriesVisibility(plot, seriesIndex, show) {
+    if (!plot || typeof plot.setSeries !== 'function') return;
+    plot.setSeries(seriesIndex, { show });
+    const legendRows = plot.root?.querySelectorAll
+      ? plot.root.querySelectorAll('.u-legend .u-series')
+      : null;
+    if (!legendRows || !legendRows[seriesIndex] || !legendRows[seriesIndex].style) return;
+    legendRows[seriesIndex].style.display = show ? '' : 'none';
   }
 
   function setSweepUiState(running) {
@@ -1956,143 +2059,116 @@
       setStatus('Loading dataset...');
       return;
     }
-    const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
-    const l2GasPerL2Block = parsePositive(l2GasPerL2BlockInput, 0);
-    const l2BlockTimeSec = parsePositive(l2BlockTimeSecInput, 12);
     syncTpsFromL2Gas();
     updateBlobEstimatePreview();
-    const l2GasScenario = l2GasScenarioInput.value || 'constant';
-    const l2DemandRegime = l2DemandRegimeInput.value || 'base';
-    const demandMultiplier = DEMAND_MULTIPLIERS[l2DemandRegime] || 1.0;
-    const l2BlocksPerL1Block = l2BlockTimeSec > 0 ? (L1_BLOCK_TIME_SECONDS / l2BlockTimeSec) : 0;
-    const l2GasPerL1BlockBase = l2GasPerL2Block * l2BlocksPerL1Block;
-    const l2GasPerL1BlockTarget = l2GasPerL1BlockBase * demandMultiplier;
-    const l1GasUsed = parsePositive(l1GasUsedInput, 0);
-    const blobMode = currentBlobMode();
-    const fixedNumBlobs = parsePositive(numBlobsInput, 0);
-    const blobModel = parseBlobModelInputs();
-    const priorityFeeGwei = parsePositive(priorityFeeGweiInput, 0);
-    const feeMechanism = currentFeeMechanism();
-    const controllerMode = controllerModeInput.value || 'ff';
-    const eip1559Denominator = Math.max(
-      1,
-      parsePositiveInt(eip1559DenominatorInput, DEFAULT_EIP1559_DENOMINATOR)
-    );
-    const arbInitialPriceGwei = parsePositive(arbInitialPriceGweiInput, DEFAULT_ARB_INITIAL_PRICE_GWEI);
-    const arbInertia = Math.max(1, parsePositiveInt(arbInertiaInput, DEFAULT_ARB_INERTIA));
-    const arbEquilUnits = Math.max(1, parsePositive(arbEquilUnitsInput, DEFAULT_ARB_EQUIL_UNITS));
-    const dffBlocks = parseNonNegativeInt(dffBlocksInput, 5);
-    const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 5);
-    const derivBeta = clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1);
-    const kp = parsePositive(kpInput, 0);
-    const pTermMinGwei = parseNumber(pMinGweiInput, 0.0);
-    const ki = parsePositive(kiInput, 0);
-    const kd = parsePositive(kdInput, 0);
-    const iMinRaw = parseNumber(iMinInput, -5);
-    const iMaxRaw = parseNumber(iMaxInput, 5);
-    const iMin = Math.min(iMinRaw, iMaxRaw);
-    const iMax = Math.max(iMinRaw, iMaxRaw);
-    const minFeeGwei = parsePositive(minFeeGweiInput, 0.01);
-    const maxFeeGwei = parsePositive(maxFeeGweiInput, 1);
-    const initialVaultEth = parsePositive(initialVaultEthInput, 0);
-    const targetVaultEth = parsePositive(targetVaultEthInput, 0);
+    let runParams = normalizeRunParams({
+      postEveryBlocks: parsePositiveInt(postEveryBlocksInput, 10),
+      l2GasPerL2Block: parsePositive(l2GasPerL2BlockInput, 0),
+      l2Tps: currentTpsSnapshot(),
+      l2BlockTimeSec: parsePositive(l2BlockTimeSecInput, 12),
+      l2GasScenario: l2GasScenarioInput.value || 'constant',
+      l2DemandRegime: l2DemandRegimeInput.value || 'base',
+      l1GasUsed: parsePositive(l1GasUsedInput, 0),
+      blobMode: currentBlobMode(),
+      fixedNumBlobs: parsePositive(numBlobsInput, 0),
+      blobModel: parseBlobModelInputs(),
+      priorityFeeGwei: parsePositive(priorityFeeGweiInput, 0),
+      feeMechanism: currentFeeMechanism(),
+      controllerMode: controllerModeInput.value || 'ff',
+      autoAlphaEnabled: autoAlphaInput.checked,
+      alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
+      alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
+      kp: parsePositive(kpInput, 0),
+      pTermMinGwei: parseNumber(pMinGweiInput, 0.0),
+      ki: parsePositive(kiInput, 0),
+      kd: parsePositive(kdInput, 0),
+      iMin: parseNumber(iMinInput, -5),
+      iMax: parseNumber(iMaxInput, 5),
+      dffBlocks: parseNonNegativeInt(dffBlocksInput, 5),
+      dfbBlocks: parseNonNegativeInt(dfbBlocksInput, 5),
+      derivBeta: clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1),
+      minFeeGwei: parsePositive(minFeeGweiInput, 0.01),
+      maxFeeGwei: parsePositive(maxFeeGweiInput, 1),
+      initialVaultEth: parsePositive(initialVaultEthInput, 0),
+      targetVaultEth: parsePositive(targetVaultEthInput, 0),
+      eip1559: {
+        maxChangeDenominator: parsePositiveInt(eip1559DenominatorInput, DEFAULT_EIP1559_DENOMINATOR)
+      },
+      arbitrum: {
+        initialPriceGwei: parsePositive(arbInitialPriceGweiInput, DEFAULT_ARB_INITIAL_PRICE_GWEI),
+        inertia: parsePositiveInt(arbInertiaInput, DEFAULT_ARB_INERTIA),
+        equilUnits: parsePositive(arbEquilUnitsInput, DEFAULT_ARB_EQUIL_UNITS),
+      }
+    });
 
-    const l2GasPerProposalBase = l2GasPerL1BlockBase * postEveryBlocks;
-    const autoAlphaEnabled = autoAlphaInput.checked;
-    const autoAlphaGas = l2GasPerProposalBase > 0 ? (l1GasUsed / l2GasPerProposalBase) : 0;
-    let expectedBlobsBase = fixedNumBlobs;
-    if (blobMode === 'dynamic') {
-      expectedBlobsBase = estimateDynamicBlobs(l2GasPerProposalBase, blobModel);
+    const demandScalars = deriveDemandScalars(runParams);
+    const l2GasPerProposalBase = demandScalars.l2GasPerProposalBase;
+    const autoAlphaGas = l2GasPerProposalBase > 0 ? (runParams.l1GasUsed / l2GasPerProposalBase) : 0;
+    let expectedBlobsBase = runParams.fixedNumBlobs;
+    if (runParams.blobMode === 'dynamic') {
+      expectedBlobsBase = estimateDynamicBlobs(l2GasPerProposalBase, runParams.blobModel);
     }
     const autoAlphaBlob =
       l2GasPerProposalBase > 0 ? ((expectedBlobsBase * BLOB_GAS_PER_BLOB) / l2GasPerProposalBase) : 0;
-    if (feeMechanism === 'taiko') {
-      if (autoAlphaEnabled) {
+    if (runParams.feeMechanism === 'taiko') {
+      if (runParams.autoAlphaEnabled) {
         alphaGasInput.value = autoAlphaGas.toFixed(6);
         alphaBlobInput.value = autoAlphaBlob.toFixed(6);
+        runParams = normalizeRunParams({
+          ...runParams,
+          alphaGas: autoAlphaGas,
+          alphaBlob: autoAlphaBlob
+        });
       }
-      alphaGasInput.disabled = autoAlphaEnabled;
-      alphaBlobInput.disabled = autoAlphaEnabled;
+      alphaGasInput.disabled = runParams.autoAlphaEnabled;
+      alphaBlobInput.disabled = runParams.autoAlphaEnabled;
     } else {
       alphaGasInput.disabled = true;
       alphaBlobInput.disabled = true;
     }
-    const alphaGas = autoAlphaEnabled ? autoAlphaGas : parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS);
-    const alphaBlob = autoAlphaEnabled ? autoAlphaBlob : parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB);
-
-    const priorityFeeWei = priorityFeeGwei * 1e9;
-    const pTermMinWei = pTermMinGwei * 1e9;
-    const minFeeWei = minFeeGwei * 1e9;
-    const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
-    const feeRangeWei = maxFeeWei - minFeeWei;
-    const modeFlags = feeMechanism === 'taiko'
-      ? getModeFlags(controllerMode)
-      : { usesFeedforward: false, usesP: false, usesI: false, usesD: false };
-    const modeUsesFeedforward = modeFlags.usesFeedforward;
-    const modeUsesP = modeFlags.usesP;
-    const modeUsesI = modeFlags.usesI;
-    const modeUsesD = modeFlags.usesD;
-    const runParams = {
+    const controllerCfg = buildCoreControllerConfig(runParams);
+    const feeMechanism = runParams.feeMechanism;
+    const targetVaultEth = runParams.targetVaultEth;
+    const maxFeeGwei = runParams.maxFeeGwei;
+    const {
       postEveryBlocks,
-      l2GasPerL2Block,
-      l2Tps: currentTpsSnapshot(),
-      l2BlockTimeSec,
-      l2GasScenario,
-      l2DemandRegime,
       l1GasUsed,
       blobMode,
       fixedNumBlobs,
-      blobModel: {
-        txGas: blobModel.txGas,
-        txBytes: blobModel.txBytes,
-        batchOverheadBytes: blobModel.batchOverheadBytes,
-        compressionRatio: blobModel.compressionRatio,
-        blobUtilization: blobModel.blobUtilization,
-        minBlobsPerProposal: blobModel.minBlobsPerProposal
-      },
-      priorityFeeGwei,
-      feeMechanism,
+      blobModel,
       controllerMode,
-      autoAlphaEnabled,
-      alphaGas,
-      alphaBlob,
       kp,
-      pTermMinGwei,
       ki,
       kd,
-      iMin,
-      iMax,
       dffBlocks,
       dfbBlocks,
       derivBeta,
-      minFeeGwei,
-      maxFeeGwei,
-      initialVaultEth,
-      targetVaultEth,
-      eip1559: {
-        maxChangeDenominator: eip1559Denominator
-      },
-      arbitrum: {
-        initialPriceGwei: arbInitialPriceGwei,
-        inertia: arbInertia,
-        equilUnits: arbEquilUnits
-      }
-    };
+      iMin,
+      iMax,
+      alphaGas,
+      alphaBlob
+    } = runParams;
+    const {
+      priorityFeeWei,
+      pTermMinWei,
+      minFeeWei,
+      maxFeeWei
+    } = controllerCfg;
 
     derivedL2GasPerL1BlockText.textContent =
-      `${formatNum(l2GasPerL1BlockBase, 0)} gas/L1 block (base), ` +
-      `${formatNum(l2GasPerL1BlockTarget, 0)} gas/L1 block (target)`;
+      `${formatNum(demandScalars.l2GasPerL1BlockBase, 0)} gas/L1 block (base), ` +
+      `${formatNum(demandScalars.l2GasPerL1BlockTarget, 0)} gas/L1 block (target)`;
     derivedL2GasPerProposalText.textContent = `${formatNum(l2GasPerProposalBase, 0)} gas/proposal (base)`;
 
     const n = blocks.length;
-    derivedL2GasPerL1Block = buildL2GasSeries(n, l2GasPerL1BlockTarget, l2GasScenario);
-    derivedL2GasPerL1BlockBase = new Array(n).fill(l2GasPerL1BlockTarget);
-    if (l2BlocksPerL1Block > 0) {
+    derivedL2GasPerL1Block = buildL2GasSeries(n, demandScalars.l2GasPerL1BlockTarget, runParams.l2GasScenario);
+    derivedL2GasPerL1BlockBase = new Array(n).fill(demandScalars.l2GasPerL1BlockTarget);
+    if (demandScalars.l2BlocksPerL1Block > 0) {
       derivedL2GasPerL2Block = derivedL2GasPerL1Block.map(function (x) {
-        return x / l2BlocksPerL1Block;
+        return x / demandScalars.l2BlocksPerL1Block;
       });
       derivedL2GasPerL2BlockBase = derivedL2GasPerL1BlockBase.map(function (x) {
-        return x / l2BlocksPerL1Block;
+        return x / demandScalars.l2BlocksPerL1Block;
       });
     } else {
       derivedL2GasPerL2Block = new Array(n).fill(0);
@@ -2123,8 +2199,7 @@
     derivedVaultTargetEth = new Array(n);
 
     const simulation = simCore.simulateSeries({
-      mechanism: feeMechanism,
-      controllerMode,
+      ...controllerCfg,
       baseFeeGwei,
       blobFeeGwei,
       l2GasPerL1BlockSeries: derivedL2GasPerL1Block,
@@ -2133,31 +2208,6 @@
       rangeStart: 0,
       rangeEnd: n - 1,
       blockIndexOffset: 0,
-      postEveryBlocks,
-      l1GasUsed,
-      blobMode,
-      fixedNumBlobs,
-      blobModel,
-      priorityFeeWei,
-      dffBlocks,
-      dfbBlocks,
-      derivBeta,
-      kp,
-      ki,
-      kd,
-      pTermMinWei,
-      iMin,
-      iMax,
-      minFeeWei,
-      maxFeeWei,
-      alphaGas,
-      alphaBlob,
-      initialVaultEth,
-      targetVaultEth,
-      eip1559Denominator,
-      arbInitialPriceGwei,
-      arbInertia,
-      arbEquilUnits,
       collectBreakdown: true,
     });
 
@@ -2689,54 +2739,48 @@
       return;
     }
 
-    const postEveryBlocks = parsePositiveInt(postEveryBlocksInput, 10);
-    const l1GasUsed = parsePositive(l1GasUsedInput, 0);
-    const blobMode = currentBlobMode();
-    const fixedNumBlobs = parsePositive(numBlobsInput, 0);
-    const blobModel = parseBlobModelInputs();
-    const priorityFeeWei = parsePositive(priorityFeeGweiInput, 0) * 1e9;
-    const dffBlocks = parseNonNegativeInt(dffBlocksInput, 5);
-    const dfbBlocks = parseNonNegativeInt(dfbBlocksInput, 5);
-    const derivBeta = clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1);
-    const pTermMinGwei = parseNumber(pMinGweiInput, 0.0);
-    const iMinRaw = parseNumber(iMinInput, -5);
-    const iMaxRaw = parseNumber(iMaxInput, 5);
-    const iMin = Math.min(iMinRaw, iMaxRaw);
-    const iMax = Math.max(iMinRaw, iMaxRaw);
-    const minFeeWei = parsePositive(minFeeGweiInput, 0.01) * 1e9;
-    const maxFeeGwei = parsePositive(maxFeeGweiInput, 1.0);
-    const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
-    const pTermMinWei = pTermMinGwei * 1e9;
-    const initialVaultEth = parsePositive(initialVaultEthInput, 0);
-    const targetVaultEth = parsePositive(targetVaultEthInput, 0);
-    const alphaGasFixed = parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS);
-    const alphaBlobFixed = parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB);
+    const runParams = normalizeRunParams({
+      postEveryBlocks: parsePositiveInt(postEveryBlocksInput, 10),
+      l1GasUsed: parsePositive(l1GasUsedInput, 0),
+      blobMode: currentBlobMode(),
+      fixedNumBlobs: parsePositive(numBlobsInput, 0),
+      blobModel: parseBlobModelInputs(),
+      priorityFeeGwei: parsePositive(priorityFeeGweiInput, 0),
+      dffBlocks: parseNonNegativeInt(dffBlocksInput, 5),
+      dfbBlocks: parseNonNegativeInt(dfbBlocksInput, 5),
+      derivBeta: clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1),
+      pTermMinGwei: parseNumber(pMinGweiInput, 0.0),
+      iMin: parseNumber(iMinInput, -5),
+      iMax: parseNumber(iMaxInput, 5),
+      minFeeGwei: parsePositive(minFeeGweiInput, 0.01),
+      maxFeeGwei: parsePositive(maxFeeGweiInput, 1.0),
+      initialVaultEth: parsePositive(initialVaultEthInput, 0),
+      targetVaultEth: parsePositive(targetVaultEthInput, 0),
+      alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
+      alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
+    });
+    const controllerCfg = buildCoreControllerConfig(runParams);
+    const alphaGasFixed = runParams.alphaGas;
+    const alphaBlobFixed = runParams.alphaBlob;
     const scoreCfg = parseScoringWeights();
     const simCfg = {
-      postEveryBlocks,
-      l1GasUsed,
-      blobMode,
-      fixedNumBlobs,
-      blobModel: {
-        txGas: blobModel.txGas,
-        txBytes: blobModel.txBytes,
-        batchOverheadBytes: blobModel.batchOverheadBytes,
-        compressionRatio: blobModel.compressionRatio,
-        blobUtilization: blobModel.blobUtilization,
-        minBlobsPerProposal: blobModel.minBlobsPerProposal
-      },
-      priorityFeeWei,
-      dffBlocks,
-      dfbBlocks,
-      derivBeta,
-      iMin,
-      iMax,
-      minFeeWei,
-      maxFeeWei,
-      maxFeeGwei,
-      pTermMinWei,
-      initialVaultEth,
-      targetVaultEth,
+      postEveryBlocks: runParams.postEveryBlocks,
+      l1GasUsed: runParams.l1GasUsed,
+      blobMode: runParams.blobMode,
+      fixedNumBlobs: runParams.fixedNumBlobs,
+      blobModel: runParams.blobModel,
+      priorityFeeWei: controllerCfg.priorityFeeWei,
+      dffBlocks: runParams.dffBlocks,
+      dfbBlocks: runParams.dfbBlocks,
+      derivBeta: runParams.derivBeta,
+      iMin: runParams.iMin,
+      iMax: runParams.iMax,
+      minFeeWei: controllerCfg.minFeeWei,
+      maxFeeWei: controllerCfg.maxFeeWei,
+      maxFeeGwei: runParams.maxFeeGwei,
+      pTermMinWei: controllerCfg.pTermMinWei,
+      initialVaultEth: runParams.initialVaultEth,
+      targetVaultEth: runParams.targetVaultEth,
       alphaGas: alphaGasFixed,
       alphaBlob: alphaBlobFixed,
       l2GasPerL1BlockSeries: derivedL2GasPerL1Block
@@ -3436,18 +3480,23 @@
       const action = target.getAttribute('data-action');
       const runId = Number(target.getAttribute('data-run-id'));
       if (!Number.isFinite(runId)) return;
-      const run = savedRuns.find(function (r) { return r.id === runId; });
-      if (!run) return;
+      let changed = false;
       if (action === 'toggle') {
-        run.visible = Boolean(target.checked);
+        changed = savedRunManager.updateRunById(runId, function (run) {
+          run.visible = Boolean(target.checked);
+        });
       } else if (action === 'lineStyle') {
-        run.solidLine = Boolean(target.checked);
+        changed = savedRunManager.updateRunById(runId, function (run) {
+          run.solidLine = Boolean(target.checked);
+        });
       } else if (action === 'name') {
-        run.name = normalizeRunName(target.value);
+        changed = savedRunManager.updateRunById(runId, function (run) {
+          run.name = normalizeRunName(target.value);
+        });
       } else {
         return;
       }
-      saveSavedRunsToStorage();
+      if (!changed) return;
       renderSavedRunsList();
       refreshComparisonPlots();
     });
@@ -3737,7 +3786,7 @@
     }
   }
 
-  loadSavedRunsFromStorage();
+  savedRunManager.loadFromStorage();
   markScoreStale('not computed yet');
   renderSavedRunsList();
   syncCurrentRunButtonLabel();
