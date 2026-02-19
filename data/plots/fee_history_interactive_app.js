@@ -1746,6 +1746,7 @@
   function syncSavedRunSeriesPresentation() {
     const applyToPlot = function (plot, startIndex, metricLabel) {
       if (!plot || !Array.isArray(plot.series)) return;
+      let needsRedraw = false;
       const legendLabels = (
         plot.root && plot.root.querySelectorAll
           ? plot.root.querySelectorAll('.u-legend .u-series .u-label')
@@ -1780,13 +1781,21 @@
         }
 
         if (typeof plot.setSeries === 'function') {
-          plot.setSeries(startIndex + i, { label, dash, width, show });
-        } else {
-          slot.label = label;
-          slot.dash = dash;
-          slot.width = width;
-          slot.show = show;
+          plot.setSeries(startIndex + i, { label, show });
         }
+
+        // uPlot setSeries does not reliably apply dash/width updates for existing series.
+        // Mutate slot style directly and force redraw when style changes.
+        if (!slot.dash || slot.dash.length !== dash.length || slot.dash.some(function (v, idx) { return v !== dash[idx]; })) {
+          slot.dash = dash.slice();
+          needsRedraw = true;
+        }
+        if (String(slot.width) !== String(width)) {
+          slot.width = width;
+          needsRedraw = true;
+        }
+        if (slot.label !== label) slot.label = label;
+        if (Boolean(slot.show !== false) !== show) slot.show = show;
 
         if (legendLabels && legendLabels[startIndex + i]) {
           const el = legendLabels[startIndex + i];
@@ -1794,6 +1803,10 @@
           const row = el.closest('.u-series');
           if (row && row.style) row.style.display = show ? '' : 'none';
         }
+      }
+
+      if (needsRedraw && typeof plot.redraw === 'function') {
+        plot.redraw();
       }
     };
 
