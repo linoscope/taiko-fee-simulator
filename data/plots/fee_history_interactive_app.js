@@ -1366,6 +1366,20 @@
     }
   }
 
+  function normalizeRunName(raw) {
+    if (raw == null) return '';
+    const s = String(raw).trim();
+    if (!s) return '';
+    return s.slice(0, 80);
+  }
+
+  function runDisplayName(run, fallbackIndex) {
+    const named = run && typeof run.name === 'string' ? normalizeRunName(run.name) : '';
+    if (named) return named;
+    if (run && Number.isFinite(Number(run.id))) return `Run #${run.id}`;
+    return `Run ${Number(fallbackIndex) + 1}`;
+  }
+
   function sanitizeSavedRun(runLike) {
     if (!runLike || typeof runLike !== 'object') return null;
     const id = Math.floor(Number(runLike.id));
@@ -1381,6 +1395,8 @@
     return {
       id,
       visible: runLike.visible !== false,
+      solidLine: runLike.solidLine === true,
+      name: normalizeRunName(runLike.name),
       datasetId: runLike.datasetId == null ? '' : String(runLike.datasetId),
       minBlock: Number.isFinite(minBlockNum) ? minBlockNum : 0,
       maxBlock: Number.isFinite(maxBlockNum) ? maxBlockNum : 0,
@@ -1401,6 +1417,8 @@
           return {
             id: run.id,
             visible: run.visible !== false,
+            solidLine: run.solidLine === true,
+            name: normalizeRunName(run.name),
             datasetId: run.datasetId == null ? '' : String(run.datasetId),
             minBlock: run.minBlock,
             maxBlock: run.maxBlock,
@@ -1725,6 +1743,59 @@
     return out;
   }
 
+  function syncSavedRunSeriesPresentation() {
+    const applyToPlot = function (plot, startIndex, metricLabel) {
+      if (!plot || !Array.isArray(plot.series)) return;
+      const legendLabels = (
+        plot.root && plot.root.querySelectorAll
+          ? plot.root.querySelectorAll('.u-legend .u-series .u-label')
+          : null
+      );
+      for (let i = 0; i < MAX_SAVED_RUNS; i++) {
+        const slot = plot.series[startIndex + i];
+        if (!slot) continue;
+        let label = `Saved run ${i + 1} ${metricLabel}`;
+        let dash = [6, 4];
+        let width = 1.1;
+        const run = savedRuns[i];
+        if (run) {
+          const name = runDisplayName(run, i);
+          label = `${name} ${metricLabel}`;
+          dash = run.solidLine ? [] : [6, 4];
+          width = run.solidLine ? 1.4 : 1.1;
+        }
+
+        if (
+          slot.label === label
+          && String(slot.width) === String(width)
+          && Array.isArray(slot.dash)
+          && Array.isArray(dash)
+          && slot.dash.length === dash.length
+          && slot.dash.every(function (v, idx) { return v === dash[idx]; })
+        ) {
+          continue;
+        }
+
+        if (typeof plot.setSeries === 'function') {
+          plot.setSeries(startIndex + i, { label, dash, width });
+        } else {
+          slot.label = label;
+          slot.dash = dash;
+          slot.width = width;
+        }
+
+        if (legendLabels && legendLabels[startIndex + i]) {
+          const el = legendLabels[startIndex + i];
+          if (el.textContent !== label) el.textContent = label;
+        }
+      }
+    };
+
+    applyToPlot(requiredFeePlot, 4, 'charged fee');
+    applyToPlot(chargedFeeOnlyPlot, 2, 'charged fee');
+    applyToPlot(vaultPlot, 3, 'vault');
+  }
+
   function renderSavedRunsList() {
     refreshSavedRunsStatus();
     if (!savedRunsList) return;
@@ -1737,15 +1808,19 @@
       const activeText = runMatchesCurrentView(run) ? 'replayed for current view' : 'needs recompute for current view';
       const recomputeText = formatClockTime(run.lastRecomputedAt);
       const tpsText = Number.isFinite(run.tps) ? formatNum(run.tps, 3) : 'n/a';
+      const displayName = runDisplayName(run, idx);
+      const rawName = normalizeRunName(run.name);
       const paramsJson = htmlEscape(JSON.stringify(run.params, null, 2));
       const slotColor = SAVED_RUN_COLORS[idx % SAVED_RUN_COLORS.length];
       return `
         <div class="saved-run" data-run-id="${run.id}">
           <div class="saved-run-head">
             <span class="saved-run-swatch" style="background:${slotColor};"></span>
-            <strong>Run #${run.id}</strong>
+            <strong>${htmlEscape(displayName)}</strong>
             <span>TPS ${tpsText}</span>
             <label><input type="checkbox" data-action="toggle" data-run-id="${run.id}" ${run.visible ? 'checked' : ''}/> show</label>
+            <label><input type="checkbox" data-action="lineStyle" data-run-id="${run.id}" ${run.solidLine ? 'checked' : ''}/> solid line</label>
+            <label>name <input class="saved-run-name" type="text" data-action="name" data-run-id="${run.id}" value="${htmlEscape(rawName)}" placeholder="Run #${run.id}" /></label>
             <button data-action="delete" data-run-id="${run.id}">Delete</button>
           </div>
           <div class="saved-run-meta">
@@ -1810,6 +1885,8 @@
     const run = {
       id: runId,
       visible: true,
+      solidLine: false,
+      name: '',
       datasetId: snap.datasetId,
       minBlock: rangeInfo ? rangeInfo.minB : snap.minBlock,
       maxBlock: rangeInfo ? rangeInfo.maxB : snap.maxBlock,
@@ -1855,6 +1932,7 @@
     const currentVault = showCurrentRun ? derivedVaultEth : hidden;
     const compareCharged = overlaySeriesForRuns('chargedFee', n);
     const compareVault = overlaySeriesForRuns('vault', n);
+    syncSavedRunSeriesPresentation();
 
     if (requiredFeePlot) {
       requiredFeePlot.setData([
@@ -3585,16 +3663,24 @@
       const target = e.target;
       if (!(target instanceof Element)) return;
       const action = target.getAttribute('data-action');
-      if (action !== 'toggle') return;
       const runId = Number(target.getAttribute('data-run-id'));
       if (!Number.isFinite(runId)) return;
       const run = savedRuns.find(function (r) { return r.id === runId; });
       if (!run) return;
-      run.visible = Boolean(target.checked);
+      if (action === 'toggle') {
+        run.visible = Boolean(target.checked);
+      } else if (action === 'lineStyle') {
+        run.solidLine = Boolean(target.checked);
+      } else if (action === 'name') {
+        run.name = normalizeRunName(target.value);
+      } else {
+        return;
+      }
       saveSavedRunsToStorage();
       renderSavedRunsList();
       refreshComparisonPlots();
     });
+
   }
 
   if (scoreBtn) {
