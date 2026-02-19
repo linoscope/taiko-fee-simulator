@@ -1987,7 +1987,7 @@
         derivedBlobFeeComponentGwei,
         currentCharged,
         ...compareCharged
-      ]);
+      ], false);
     }
 
     if (chargedFeeOnlyPlot) {
@@ -1995,7 +1995,7 @@
         blocks,
         currentCharged,
         ...compareCharged
-      ]);
+      ], false);
     }
 
     if (vaultPlot) {
@@ -2004,7 +2004,7 @@
         derivedVaultTargetEth,
         currentVault,
         ...compareVault
-      ]);
+      ], false);
     }
 
     renderSavedRunsList();
