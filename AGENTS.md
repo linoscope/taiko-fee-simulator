@@ -1,30 +1,50 @@
-# AGENT.md
+# AGENTS.md
 
-## Visual Regression Tests (Playwright)
+## E2E: Build The Interactive HTML
 
-### How to run
-
-```bash
-npm run visual:test
-```
-
-If baselines must be intentionally updated:
+Run from repo root:
 
 ```bash
-npm run visual:update
+cd /home/lin/workspace/taiko-fee-simulator
 ```
 
-To review results in the Playwright HTML report:
+### 1) Generate the interactive fee simulator page
 
 ```bash
-npm run visual:report
+python3 script/generate_interactive_fee_uplot.py \
+  --dataset "current365|Current 365d|data/eth_l1_fee_365d_20260206T195430Z.csv" \
+  --dataset "prior365|Prior 365d|data/eth_l1_fee_365d_20260207T042312Z.csv" \
+  --dataset "year2021|Year 2021|data/eth_l1_fee_blocks_11565019_13916165_20260207T065924Z.csv" \
+  --initial-dataset current365 \
+  --max-points 160000 \
+  --no-rpc-anchor \
+  --out-html data/plots/fee_history_interactive.html \
+  --out-js data/plots/fee_history_interactive_app.js
 ```
 
-HTML report location:
+This writes:
+- `data/plots/fee_history_interactive.html`
+- `data/plots/fee_history_interactive_app.js`
+- dataset payload files in `data/plots/` (for each dataset)
 
-`/home/lin/workspace/taiko-fee-simulator/playwright-report/index.html`
+### 2) Serve locally (recommended)
 
-### Policy
+```bash
+cd data/plots
+python3 -m http.server 8000
+```
 
-- Always run visual tests when touching anything that can impact UI (HTML, CSS, frontend JS, rendering logic, chart layout, viewport behavior, or UI state flows).
-- If a visual regression is detected, ask the user whether the regression is expected or not, and point them to the Playwright HTML report path above for review before updating snapshots.
+Open:
+
+- `http://127.0.0.1:8000/fee_history_interactive.html`
+- Example with params:
+  - `http://127.0.0.1:8000/fee_history_interactive.html?dataset=current365&min=21771899&max=24399899`
+
+### 3) Optional sanity check
+
+Run core tests:
+
+```bash
+cd /home/lin/workspace/taiko-fee-simulator
+node --test data/plots/tests/*.test.js
+```
