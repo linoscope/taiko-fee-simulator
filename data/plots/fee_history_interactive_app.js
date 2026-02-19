@@ -35,6 +35,7 @@
     '#e11d48',
     '#14b8a6'
   ]);
+  const simCore = window.FeeSimCore || null;
   const DATASET_MANIFEST = (window.__feeDatasetManifest && Array.isArray(window.__feeDatasetManifest.datasets))
     ? window.__feeDatasetManifest.datasets.slice()
     : [];
@@ -312,6 +313,11 @@
 
   function setStatus(msg) {
     status.textContent = msg || '';
+  }
+
+  if (!simCore) {
+    setStatus('Simulation core failed to load. Ensure fee_history_sim_core.js is served.');
+    return;
   }
 
   function getDatasetMeta(datasetId) {
@@ -768,32 +774,7 @@
   }
 
   function getModeFlags(mode) {
-    const usesFeedforward = (
-      mode === 'ff' ||
-      mode === 'alpha-only' ||
-      mode === 'pi+ff' ||
-      mode === 'pdi+ff'
-    );
-    const usesP = (
-      mode === 'p' ||
-      mode === 'pi' ||
-      mode === 'pd' ||
-      mode === 'pdi' ||
-      mode === 'pi+ff' ||
-      mode === 'pdi+ff'
-    );
-    const usesI = (
-      mode === 'pi' ||
-      mode === 'pdi' ||
-      mode === 'pi+ff' ||
-      mode === 'pdi+ff'
-    );
-    const usesD = (
-      mode === 'pd' ||
-      mode === 'pdi' ||
-      mode === 'pdi+ff'
-    );
-    return { usesFeedforward, usesP, usesI, usesD };
+    return simCore.getModeFlags(mode);
   }
 
   function currentBlobMode() {
@@ -826,22 +807,7 @@
   }
 
   function estimateDynamicBlobs(l2GasPerProposal, blobModel) {
-    if (!(l2GasPerProposal > 0)) {
-      return Math.max(0, blobModel.minBlobsPerProposal);
-    }
-    const txGas = Math.max(1, blobModel.txGas);
-    const txBytes = Math.max(0, blobModel.txBytes);
-    const batchOverheadBytes = Math.max(0, blobModel.batchOverheadBytes);
-    const compressionRatio = Math.max(1e-9, blobModel.compressionRatio);
-    const blobUtilization = clampNum(blobModel.blobUtilization, 1e-9, 1);
-    const minBlobs = Math.max(0, blobModel.minBlobsPerProposal);
-
-    const txCount = l2GasPerProposal / txGas;
-    const uncompressedBytes = batchOverheadBytes + txCount * txBytes;
-    const compressedBytes = uncompressedBytes / compressionRatio;
-    const bytesPerBlob = BLOB_GAS_PER_BLOB * blobUtilization;
-    const blobs = compressedBytes > 0 ? Math.ceil(compressedBytes / bytesPerBlob) : 0;
-    return Math.max(minBlobs, blobs);
+    return simCore.estimateDynamicBlobs(l2GasPerProposal, blobModel);
   }
 
   function updateBlobEstimatePreview() {
@@ -1234,52 +1200,8 @@
     return Math.max(lo, Math.min(hi, x));
   }
 
-  function makeRng(seed) {
-    let s = seed >>> 0;
-    return function () {
-      s = (1664525 * s + 1013904223) >>> 0;
-      return s / 4294967296;
-    };
-  }
-
-  function gaussian(rng) {
-    const u1 = Math.max(1e-12, rng());
-    const u2 = rng();
-    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  }
-
   function buildL2GasSeries(n, baseGasPerL1Block, scenario) {
-    const out = new Array(n);
-    if (scenario === 'constant') {
-      for (let i = 0; i < n; i++) out[i] = baseGasPerL1Block;
-      return out;
-    }
-
-    const cfg = scenario === 'steady'
-      ? { rho: 0.97, sigma: 0.03, jumpProb: 0.0, jumpSigma: 0.0, lo: 0.75, hi: 1.35 }
-      : scenario === 'bursty'
-        ? { rho: 0.90, sigma: 0.16, jumpProb: 0.035, jumpSigma: 0.45, lo: 0.25, hi: 3.5 }
-        : { rho: 0.94, sigma: 0.08, jumpProb: 0.01, jumpSigma: 0.20, lo: 0.45, hi: 2.0 }; // normal
-
-    const rng = makeRng(0x1234abcd);
-    let x = 0;
-    for (let i = 0; i < n; i++) {
-      x = cfg.rho * x + cfg.sigma * gaussian(rng);
-      if (cfg.jumpProb > 0 && rng() < cfg.jumpProb) x += cfg.jumpSigma * gaussian(rng);
-      const m = clampNum(Math.exp(x), cfg.lo, cfg.hi);
-      out[i] = baseGasPerL1Block * m;
-    }
-
-    // Mean-neutralize scenario throughput so randomness adds volatility, not systematic bias.
-    let sum = 0;
-    for (let i = 0; i < n; i++) sum += out[i];
-    const avg = n > 0 ? (sum / n) : baseGasPerL1Block;
-    if (avg > 0) {
-      const scale = baseGasPerL1Block / avg;
-      for (let i = 0; i < n; i++) out[i] *= scale;
-    }
-
-    return out;
+    return simCore.buildL2GasSeries(n, baseGasPerL1Block, scenario);
   }
 
   let derivedL2GasPerL1Block = [];
@@ -1492,9 +1414,6 @@
     const mechanism = params.feeMechanism === 'arbitrum'
       ? 'arbitrum'
       : (params.feeMechanism === 'eip1559' ? 'eip1559' : 'taiko');
-    const modeFlags = mechanism === 'taiko'
-      ? getModeFlags(params.controllerMode || 'ff')
-      : { usesFeedforward: false, usesP: false, usesI: false, usesD: false };
 
     const postEveryBlocks = Math.max(1, Math.floor(Number(params.postEveryBlocks) || 10));
     const l2GasPerL2Block = Math.max(0, Number(params.l2GasPerL2Block) || 0);
@@ -1525,7 +1444,8 @@
     const kp = Math.max(0, Number(params.kp) || 0);
     const ki = Math.max(0, Number(params.ki) || 0);
     const kd = Math.max(0, Number(params.kd) || 0);
-    const derivBeta = clampNum(Number(params.derivBeta), 0, 1);
+    const derivBetaRaw = Number(params.derivBeta);
+    const derivBeta = clampNum(Number.isFinite(derivBetaRaw) ? derivBetaRaw : 0.8, 0, 1);
     const dffBlocks = Math.max(0, Math.floor(Number(params.dffBlocks) || 0));
     const dfbBlocks = Math.max(0, Math.floor(Number(params.dfbBlocks) || 0));
     const pTermMinGwei = Number(params.pTermMinGwei) || 0;
@@ -1537,8 +1457,6 @@
     const iMaxRaw = Number(params.iMax);
     const iMin = Number.isFinite(iMinRaw) ? iMinRaw : 0;
     const iMax = Number.isFinite(iMaxRaw) ? iMaxRaw : 10;
-    const iLo = Math.min(iMin, iMax);
-    const iHi = Math.max(iMin, iMax);
 
     const eipCfg = params.eip1559 || {};
     const eip1559Denominator = Math.max(
@@ -1553,133 +1471,58 @@
     const l2BlocksPerL1Block = L1_BLOCK_TIME_SECONDS / l2BlockTimeSec;
     const l2GasPerL1Target = l2GasPerL2Block * l2BlocksPerL1Block * demandMultiplier;
     const localGasSeries = buildL2GasSeries(rangeInfo.n, l2GasPerL1Target, l2GasScenario);
-
-    const chargedFee = new Array(n).fill(null);
-    const vaultSeries = new Array(n).fill(null);
-    const localVaultSeries = new Array(rangeInfo.n).fill(initialVaultEth);
+    const baseFeeSlice = baseFeeGwei.slice(rangeInfo.i0, rangeInfo.i1 + 1);
+    const blobFeeSlice = blobFeeGwei.slice(rangeInfo.i0, rangeInfo.i1 + 1);
 
     const priorityFeeWei = priorityFeeGwei * 1e9;
     const minFeeWei = minFeeGwei * 1e9;
     const maxFeeWei = Math.max(minFeeWei, maxFeeGwei * 1e9);
-    const feeRangeWei = maxFeeWei - minFeeWei;
     const pTermMinWei = pTermMinGwei * 1e9;
+    const replay = simCore.simulateSeries({
+      mechanism,
+      controllerMode: params.controllerMode || 'ff',
+      baseFeeGwei: baseFeeSlice,
+      blobFeeGwei: blobFeeSlice,
+      l2GasPerL1BlockSeries: localGasSeries,
+      fullLength: rangeInfo.n,
+      rangeStart: 0,
+      rangeEnd: rangeInfo.n - 1,
+      blockIndexOffset: rangeInfo.i0,
+      postEveryBlocks,
+      l1GasUsed,
+      blobMode,
+      fixedNumBlobs,
+      blobModel,
+      priorityFeeWei,
+      dffBlocks,
+      dfbBlocks,
+      derivBeta,
+      kp,
+      ki,
+      kd,
+      pTermMinWei,
+      iMin,
+      iMax,
+      minFeeWei,
+      maxFeeWei,
+      alphaGas,
+      alphaBlob,
+      initialVaultEth,
+      targetVaultEth,
+      eip1559Denominator,
+      arbInitialPriceGwei,
+      arbInertia,
+      arbEquilUnits,
+      collectBreakdown: false
+    });
 
-    let vault = initialVaultEth;
-    let pendingRevenueEth = 0;
-    let integralState = 0;
-    let epsilonPrev = 0;
-    let derivFiltered = 0;
-    let eip1559FeeWeiPerL2Gas = minFeeWei;
-    let arbPriceGwei = clampNum(arbInitialPriceGwei, minFeeGwei, maxFeeGwei);
-    let arbLastSurplusEth = initialVaultEth - targetVaultEth;
-
+    const chargedFee = new Array(n).fill(null);
+    const vaultSeries = new Array(n).fill(null);
     for (let local = 0; local < rangeInfo.n; local++) {
       const i = rangeInfo.i0 + local;
-      const baseFeeWei = baseFeeGwei[i] * 1e9;
-      const blobBaseFeeWei = blobFeeGwei[i] * 1e9;
-      const ffLocal = Math.max(0, local - dffBlocks);
-      const ffIndex = rangeInfo.i0 + ffLocal;
-      const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
-      const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
-
-      const l2GasPerL1Block_i = localGasSeries[local];
-      const l2GasPerProposal_i = l2GasPerL1Block_i * postEveryBlocks;
-      const numBlobs_i = blobMode === 'dynamic'
-        ? estimateDynamicBlobs(l2GasPerProposal_i, blobModel)
-        : fixedNumBlobs;
-      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
-      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
-      const totalCostWei = gasCostWei + blobCostWei;
-
-      const fbLocal = local - dfbBlocks;
-      const observedVault = fbLocal >= 0 ? localVaultSeries[fbLocal] : initialVaultEth;
-      const deficitEth = targetVaultEth - observedVault;
-      const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
-
-      let gasComponentWei = 0;
-      let blobComponentWei = 0;
-      let feedforwardWei = 0;
-      let pTermWei = 0;
-      let iTermWei = 0;
-      let dTermWei = 0;
-      let feedbackWei = 0;
-      let chargedFeeWeiPerL2Gas = minFeeWei;
-
-      if (mechanism === 'taiko') {
-        gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
-        blobComponentWei = alphaBlob * blobBaseFeeFfWei;
-        if (modeFlags.usesI) {
-          integralState = clampNum(integralState + epsilon, iLo, iHi);
-        } else {
-          integralState = 0;
-        }
-        const deRaw = local > 0 ? (epsilon - epsilonPrev) : 0;
-        derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
-        const pTermWeiRaw = modeFlags.usesP ? (kp * epsilon * feeRangeWei) : 0;
-        pTermWei = modeFlags.usesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
-        iTermWei = modeFlags.usesI ? (ki * integralState * feeRangeWei) : 0;
-        dTermWei = modeFlags.usesD ? (kd * derivFiltered * feeRangeWei) : 0;
-        feedbackWei = pTermWei + iTermWei + dTermWei;
-        feedforwardWei = modeFlags.usesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
-        chargedFeeWeiPerL2Gas = Math.max(minFeeWei, Math.min(maxFeeWei, feedforwardWei + feedbackWei));
-      } else if (mechanism === 'arbitrum') {
-        const arbRawFeeWeiPerL2Gas = Math.max(0, arbPriceGwei * 1e9);
-        chargedFeeWeiPerL2Gas = Math.max(minFeeWei, Math.min(maxFeeWei, arbRawFeeWeiPerL2Gas));
-        integralState = 0;
-        derivFiltered = 0;
-      } else {
-        chargedFeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
-        integralState = 0;
-        derivFiltered = 0;
-      }
-
-      chargedFee[i] = chargedFeeWeiPerL2Gas / 1e9;
-
-      const l2RevenueEthPerBlock = (chargedFeeWeiPerL2Gas * l2GasPerL1Block_i) / 1e18;
-      pendingRevenueEth += l2RevenueEthPerBlock;
-
-      const posted = ((i + 1) % postEveryBlocks) === 0;
-      if (posted) {
-        vault += pendingRevenueEth;
-        pendingRevenueEth = 0;
-        vault -= totalCostWei / 1e18;
-
-        if (mechanism === 'arbitrum') {
-          const unitsAllocated = Math.max(0, l2GasPerProposal_i);
-          const surplusEth = vault - targetVaultEth;
-          if (unitsAllocated > 0 && arbEquilUnits > 0 && arbInertia > 0) {
-            const inertiaUnits = arbEquilUnits / arbInertia;
-            const desiredDerivativeGwei = -(surplusEth * 1e9) / arbEquilUnits;
-            const actualDerivativeGwei =
-              ((surplusEth - arbLastSurplusEth) * 1e9) / unitsAllocated;
-            const changeDerivativeGwei = desiredDerivativeGwei - actualDerivativeGwei;
-            const denom = inertiaUnits + unitsAllocated;
-            const priceChangeGwei = denom > 0
-              ? (changeDerivativeGwei * unitsAllocated) / denom
-              : 0;
-            arbPriceGwei = Math.max(0, arbPriceGwei + priceChangeGwei);
-          }
-          arbLastSurplusEth = surplusEth;
-        } else if (mechanism === 'eip1559') {
-          if (targetVaultEth > 0) {
-            let errorRatio = (targetVaultEth - vault) / targetVaultEth;
-            errorRatio = clampNum(errorRatio, -8, 1);
-            const adjustmentFactor = 1 + (errorRatio / eip1559Denominator);
-            const nextFeeWeiPerL2Gas = eip1559FeeWeiPerL2Gas * adjustmentFactor;
-            if (Number.isFinite(nextFeeWeiPerL2Gas)) {
-              eip1559FeeWeiPerL2Gas = clampNum(nextFeeWeiPerL2Gas, minFeeWei, maxFeeWei);
-            }
-          } else {
-            eip1559FeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
-          }
-        }
-      }
-
-      localVaultSeries[local] = vault;
-      vaultSeries[i] = vault;
-      epsilonPrev = epsilon;
+      chargedFee[i] = replay.chargedFeeGwei[local];
+      vaultSeries[i] = replay.vaultEth[local];
     }
-
     return { chargedFee, vault: vaultSeries };
   }
 
@@ -2279,166 +2122,68 @@
     derivedVaultEth = new Array(n);
     derivedVaultTargetEth = new Array(n);
 
-    let vault = initialVaultEth;
-    let pendingRevenueEth = 0;
-    let integralState = 0;
-    let epsilonPrev = 0;
-    let derivFiltered = 0;
-    let eip1559FeeWeiPerL2Gas = minFeeWei;
-    let arbPriceGwei = clampNum(arbInitialPriceGwei, minFeeGwei, maxFeeGwei);
-    let arbLastSurplusEth = initialVaultEth - targetVaultEth;
+    const simulation = simCore.simulateSeries({
+      mechanism: feeMechanism,
+      controllerMode,
+      baseFeeGwei,
+      blobFeeGwei,
+      l2GasPerL1BlockSeries: derivedL2GasPerL1Block,
+      blocks,
+      fullLength: n,
+      rangeStart: 0,
+      rangeEnd: n - 1,
+      blockIndexOffset: 0,
+      postEveryBlocks,
+      l1GasUsed,
+      blobMode,
+      fixedNumBlobs,
+      blobModel,
+      priorityFeeWei,
+      dffBlocks,
+      dfbBlocks,
+      derivBeta,
+      kp,
+      ki,
+      kd,
+      pTermMinWei,
+      iMin,
+      iMax,
+      minFeeWei,
+      maxFeeWei,
+      alphaGas,
+      alphaBlob,
+      initialVaultEth,
+      targetVaultEth,
+      eip1559Denominator,
+      arbInitialPriceGwei,
+      arbInertia,
+      arbEquilUnits,
+      collectBreakdown: true,
+    });
 
-    for (let i = 0; i < n; i++) {
-      const baseFeeWei = baseFeeGwei[i] * 1e9;
-      const blobBaseFeeWei = blobFeeGwei[i] * 1e9;
-      const ffIndex = Math.max(0, i - dffBlocks);
-      const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
-      const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
-
-      const l2GasPerL1Block_i = derivedL2GasPerL1Block[i];
-      const l2GasPerProposal_i = l2GasPerL1Block_i * postEveryBlocks;
-      const numBlobs_i = blobMode === 'dynamic'
-        ? estimateDynamicBlobs(l2GasPerProposal_i, blobModel)
-        : fixedNumBlobs;
-      const gasCostWei = l1GasUsed * (baseFeeWei + priorityFeeWei);
-      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
-      const totalCostWei = gasCostWei + blobCostWei;
-
-      derivedGasCostEth[i] = gasCostWei / 1e18;
-      derivedBlobCostEth[i] = blobCostWei / 1e18;
-      derivedPostingCostEth[i] = totalCostWei / 1e18;
-      const fbIndex = i - dfbBlocks;
-      const observedVault = fbIndex >= 0 ? derivedVaultEth[fbIndex] : initialVaultEth;
-      const deficitEth = targetVaultEth - observedVault;
-      const epsilon = targetVaultEth > 0 ? (deficitEth / targetVaultEth) : 0;
-
-      let gasComponentWei = 0;
-      let blobComponentWei = 0;
-      let feedforwardWei = 0;
-      let pTermWei = 0;
-      let iTermWei = 0;
-      let dTermWei = 0;
-      let feedbackWei = 0;
-      let chargedFeeWeiPerL2Gas = minFeeWei;
-
-      if (feeMechanism === 'taiko') {
-        gasComponentWei = alphaGas * (baseFeeFfWei + priorityFeeWei);
-        blobComponentWei = alphaBlob * blobBaseFeeFfWei;
-
-        if (modeUsesI) {
-          integralState = clampNum(integralState + epsilon, iMin, iMax);
-        } else {
-          integralState = 0;
-        }
-
-        const deRaw = i > 0 ? (epsilon - epsilonPrev) : 0;
-        derivFiltered = derivBeta * derivFiltered + (1 - derivBeta) * deRaw;
-
-        const pTermWeiRaw = modeUsesP ? (kp * epsilon * feeRangeWei) : 0;
-        pTermWei = modeUsesP ? Math.max(pTermMinWei, pTermWeiRaw) : 0;
-        iTermWei = modeUsesI ? (ki * integralState * feeRangeWei) : 0;
-        dTermWei = modeUsesD ? (kd * derivFiltered * feeRangeWei) : 0;
-        feedbackWei = pTermWei + iTermWei + dTermWei;
-        feedforwardWei = modeUsesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
-        chargedFeeWeiPerL2Gas = Math.max(
-          minFeeWei,
-          Math.min(maxFeeWei, feedforwardWei + feedbackWei)
-        );
-      } else if (feeMechanism === 'arbitrum') {
-        integralState = 0;
-        derivFiltered = 0;
-        const arbRawFeeWeiPerL2Gas = Math.max(0, arbPriceGwei * 1e9);
-        chargedFeeWeiPerL2Gas = Math.max(
-          minFeeWei,
-          Math.min(maxFeeWei, arbRawFeeWeiPerL2Gas)
-        );
-      } else {
-        integralState = 0;
-        derivFiltered = 0;
-        chargedFeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
-      }
-
-      let clampState = 'none';
-      if (chargedFeeWeiPerL2Gas <= minFeeWei + 1e-9) clampState = 'min';
-      else if (chargedFeeWeiPerL2Gas >= maxFeeWei - 1e-9) clampState = 'max';
-
-      derivedGasFeeComponentGwei[i] = gasComponentWei / 1e9;
-      derivedBlobFeeComponentGwei[i] = blobComponentWei / 1e9;
-      derivedFeedforwardFeeGwei[i] = feedforwardWei / 1e9;
-      derivedPTermFeeGwei[i] = pTermWei / 1e9;
-      derivedITermFeeGwei[i] = iTermWei / 1e9;
-      derivedDTermFeeGwei[i] = dTermWei / 1e9;
-      derivedFeedbackFeeGwei[i] = feedbackWei / 1e9;
-      derivedChargedFeeGwei[i] = chargedFeeWeiPerL2Gas / 1e9;
-      derivedDeficitEth[i] = deficitEth;
-      derivedEpsilon[i] = epsilon;
-      derivedDerivative[i] = derivFiltered;
-      derivedIntegral[i] = integralState;
-      derivedClampState[i] = clampState;
-
-      if (l2GasPerProposal_i > 0) {
-        const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
-        derivedRequiredFeeGwei[i] = breakEvenFeeWeiPerL2Gas / 1e9;
-      } else {
-        derivedRequiredFeeGwei[i] = null;
-      }
-
-      const l2RevenueEthPerBlock =
-        (chargedFeeWeiPerL2Gas * l2GasPerL1Block_i) / 1e18;
-      // Post-time settlement: revenue is recognized only at posting blocks.
-      pendingRevenueEth += l2RevenueEthPerBlock;
-
-      // Fixed-cadence posting event: deduct fixed-resource posting cost at post blocks.
-      const posted = ((i + 1) % postEveryBlocks) === 0;
-      if (posted) {
-        const postingRevenueEth = pendingRevenueEth;
-        derivedPostingRevenueAtPostEth[i] = postingRevenueEth;
-        derivedPostingPnLEth[i] = postingRevenueEth - derivedPostingCostEth[i];
-        derivedPostingPnLBlocks.push(blocks[i]);
-        derivedPostBreakEvenFlag[i] = postingRevenueEth + 1e-12 >= derivedPostingCostEth[i];
-        vault += postingRevenueEth;
-        pendingRevenueEth = 0;
-        vault -= derivedPostingCostEth[i];
-
-        if (feeMechanism === 'arbitrum') {
-          const unitsAllocated = Math.max(0, l2GasPerProposal_i);
-          const surplusEth = vault - targetVaultEth;
-          if (unitsAllocated > 0 && arbEquilUnits > 0 && arbInertia > 0) {
-            const inertiaUnits = arbEquilUnits / arbInertia;
-            const desiredDerivativeGwei = -(surplusEth * 1e9) / arbEquilUnits;
-            const actualDerivativeGwei =
-              ((surplusEth - arbLastSurplusEth) * 1e9) / unitsAllocated;
-            const changeDerivativeGwei = desiredDerivativeGwei - actualDerivativeGwei;
-            const denom = inertiaUnits + unitsAllocated;
-            const priceChangeGwei = denom > 0
-              ? (changeDerivativeGwei * unitsAllocated) / denom
-              : 0;
-            arbPriceGwei = Math.max(0, arbPriceGwei + priceChangeGwei);
-          }
-          arbLastSurplusEth = surplusEth;
-        } else if (feeMechanism === 'eip1559') {
-          if (targetVaultEth > 0) {
-            let errorRatio = (targetVaultEth - vault) / targetVaultEth;
-            errorRatio = clampNum(errorRatio, -8, 1);
-            const adjustmentFactor = 1 + (errorRatio / eip1559Denominator);
-            const nextFeeWeiPerL2Gas = eip1559FeeWeiPerL2Gas * adjustmentFactor;
-            if (Number.isFinite(nextFeeWeiPerL2Gas)) {
-              eip1559FeeWeiPerL2Gas = clampNum(nextFeeWeiPerL2Gas, minFeeWei, maxFeeWei);
-            }
-          } else {
-            eip1559FeeWeiPerL2Gas = clampNum(eip1559FeeWeiPerL2Gas, minFeeWei, maxFeeWei);
-          }
-        }
-      } else {
-        derivedPostingRevenueAtPostEth[i] = null;
-        derivedPostingPnLEth[i] = null;
-        derivedPostBreakEvenFlag[i] = null;
-      }
-
-      derivedVaultEth[i] = vault;
-      derivedVaultTargetEth[i] = targetVaultEth;
-      epsilonPrev = epsilon;
-    }
+    derivedGasCostEth = simulation.gasCostEth;
+    derivedBlobCostEth = simulation.blobCostEth;
+    derivedPostingCostEth = simulation.postingCostEth;
+    derivedRequiredFeeGwei = simulation.requiredFeeGwei;
+    derivedGasFeeComponentGwei = simulation.gasFeeComponentGwei;
+    derivedBlobFeeComponentGwei = simulation.blobFeeComponentGwei;
+    derivedFeedforwardFeeGwei = simulation.feedforwardFeeGwei;
+    derivedPTermFeeGwei = simulation.pTermFeeGwei;
+    derivedITermFeeGwei = simulation.iTermFeeGwei;
+    derivedDTermFeeGwei = simulation.dTermFeeGwei;
+    derivedFeedbackFeeGwei = simulation.feedbackFeeGwei;
+    derivedChargedFeeGwei = simulation.chargedFeeGwei;
+    derivedPostingRevenueAtPostEth = simulation.postingRevenueAtPostEth;
+    derivedPostingPnLEth = simulation.postingPnLEth;
+    derivedPostingPnLBlocks = simulation.postingPnLBlocks;
+    derivedPostBreakEvenFlag = simulation.postBreakEvenFlag;
+    derivedDeficitEth = simulation.deficitEth;
+    derivedEpsilon = simulation.epsilon;
+    derivedDerivative = simulation.derivative;
+    derivedIntegral = simulation.integral;
+    derivedClampState = simulation.clampState;
+    derivedVaultEth = simulation.vaultEth;
+    derivedVaultTargetEth = new Array(n).fill(targetVaultEth);
 
     const preservedRange = getCurrentXRange();
 
@@ -2525,12 +2270,14 @@
           l1GasUsed,
           blobMode,
           fixedNumBlobs,
-          txGas: blobModel.txGas,
-          txBytes: blobModel.txBytes,
-          batchOverheadBytes: blobModel.batchOverheadBytes,
-          compressionRatio: blobModel.compressionRatio,
-          blobUtilization: blobModel.blobUtilization,
-          minBlobsPerProposal: blobModel.minBlobsPerProposal,
+          blobModel: {
+            txGas: blobModel.txGas,
+            txBytes: blobModel.txBytes,
+            batchOverheadBytes: blobModel.batchOverheadBytes,
+            compressionRatio: blobModel.compressionRatio,
+            blobUtilization: blobModel.blobUtilization,
+            minBlobsPerProposal: blobModel.minBlobsPerProposal
+          },
           priorityFeeWei,
           dffBlocks,
           dfbBlocks,
@@ -2540,7 +2287,6 @@
           minFeeWei,
           maxFeeWei,
           maxFeeGwei,
-          feeRangeWei: maxFeeWei - minFeeWei,
           pTermMinWei,
           initialVaultEth,
           targetVaultEth,
@@ -2572,7 +2318,6 @@
   }
 
   function evaluateSweepCandidate(i0, i1, candidate, simCfg, scoreCfg) {
-    const modeFlags = getModeFlags(candidate.mode);
     const candidateAlphaGas = Number.isFinite(candidate.alphaGas)
       ? Math.max(0, candidate.alphaGas)
       : Math.max(0, simCfg.alphaGas);
@@ -2585,13 +2330,47 @@
     const feeDenom = simCfg.maxFeeGwei > 0 ? simCfg.maxFeeGwei : 1;
     const deadbandFloor = simCfg.targetVaultEth * (1 - scoreCfg.deadbandPct / 100);
 
-    const vaultSeries = new Array(n);
+    const iMaxSweep = Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax;
+    const simulation = simCore.simulateSeries({
+      mechanism: 'taiko',
+      controllerMode: candidate.mode,
+      baseFeeGwei: baseFeeGwei.slice(i0, i1 + 1),
+      blobFeeGwei: blobFeeGwei.slice(i0, i1 + 1),
+      l2GasPerL1BlockSeries: simCfg.l2GasPerL1BlockSeries.slice(i0, i1 + 1),
+      fullLength: n,
+      rangeStart: 0,
+      rangeEnd: n - 1,
+      blockIndexOffset: i0,
+      postEveryBlocks: simCfg.postEveryBlocks,
+      l1GasUsed: simCfg.l1GasUsed,
+      blobMode: simCfg.blobMode,
+      fixedNumBlobs: simCfg.fixedNumBlobs,
+      blobModel: simCfg.blobModel,
+      priorityFeeWei: simCfg.priorityFeeWei,
+      dffBlocks: simCfg.dffBlocks,
+      dfbBlocks: simCfg.dfbBlocks,
+      derivBeta: simCfg.derivBeta,
+      kp: candidate.kp,
+      ki: candidate.ki,
+      kd: candidate.kd,
+      pTermMinWei: simCfg.pTermMinWei,
+      iMin: simCfg.iMin,
+      iMax: iMaxSweep,
+      minFeeWei: simCfg.minFeeWei,
+      maxFeeWei: simCfg.maxFeeWei,
+      alphaGas: candidateAlphaGas,
+      alphaBlob: candidateAlphaBlob,
+      initialVaultEth: simCfg.initialVaultEth,
+      targetVaultEth: simCfg.targetVaultEth,
+      collectBreakdown: true
+    });
+
+    const chargedSeries = simulation.chargedFeeGwei;
+    const vaultSeries = simulation.vaultEth;
+    const requiredSeries = simulation.requiredFeeGwei;
+    const clampSeries = simulation.clampState;
+    const postBreakEvenSeries = simulation.postBreakEvenFlag;
     const feeSteps = [];
-    let vault = simCfg.initialVaultEth;
-    let pendingRevenueEth = 0;
-    let integralState = 0;
-    let epsilonPrev = 0;
-    let derivFiltered = 0;
     let feePrev = null;
     let feeSum = 0;
     let feeSumSq = 0;
@@ -2607,85 +2386,32 @@
     let postCount = 0;
     let postBreakEvenCount = 0;
 
-    for (let local = 0; local < n; local++) {
-      const i = i0 + local;
-      const baseFeeWei = baseFeeGwei[i] * 1e9;
-      const blobBaseFeeWei = blobFeeGwei[i] * 1e9;
-      const ffIndex = Math.max(0, i - simCfg.dffBlocks);
-      const baseFeeFfWei = baseFeeGwei[ffIndex] * 1e9;
-      const blobBaseFeeFfWei = blobFeeGwei[ffIndex] * 1e9;
+    for (let i = 0; i < n; i++) {
+      const chargedFeeGwei = chargedSeries[i];
+      const vault = vaultSeries[i];
+      const requiredFeeGwei = requiredSeries[i];
+      const clampState = clampSeries[i];
+      const postBreakEven = postBreakEvenSeries[i];
+      if (chargedFeeGwei == null || vault == null) continue;
 
-      const l2GasPerProposal_i = simCfg.l2GasPerL1BlockSeries[i] * simCfg.postEveryBlocks;
-      const numBlobs_i = simCfg.blobMode === 'dynamic'
-        ? estimateDynamicBlobs(l2GasPerProposal_i, simCfg)
-        : simCfg.fixedNumBlobs;
-      const gasCostWei = simCfg.l1GasUsed * (baseFeeWei + simCfg.priorityFeeWei);
-      const blobCostWei = numBlobs_i * BLOB_GAS_PER_BLOB * blobBaseFeeWei;
-      const totalCostWei = gasCostWei + blobCostWei;
-
-      const fbLocal = local - simCfg.dfbBlocks;
-      const observedVault = fbLocal >= 0 ? vaultSeries[fbLocal] : simCfg.initialVaultEth;
-      const deficitEth = simCfg.targetVaultEth - observedVault;
-      const epsilon = targetDenom > 0 ? (deficitEth / targetDenom) : 0;
-      const iMaxSweep = Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax;
-      if (modeFlags.usesI) {
-        integralState = clampNum(integralState + epsilon, simCfg.iMin, iMaxSweep);
-      } else {
-        integralState = 0;
-      }
-      const deRaw = local > 0 ? (epsilon - epsilonPrev) : 0;
-      derivFiltered =
-        simCfg.derivBeta * derivFiltered + (1 - simCfg.derivBeta) * deRaw;
-
-      const feedforwardWei = modeFlags.usesFeedforward
-        ? (
-            candidateAlphaGas * (baseFeeFfWei + simCfg.priorityFeeWei) +
-            candidateAlphaBlob * blobBaseFeeFfWei
-          )
-        : 0;
-      const pTermWeiRaw = modeFlags.usesP ? (candidate.kp * epsilon * simCfg.feeRangeWei) : 0;
-      const pTermWei = modeFlags.usesP ? Math.max(simCfg.pTermMinWei, pTermWeiRaw) : 0;
-      const iTermWei = modeFlags.usesI ? (candidate.ki * integralState * simCfg.feeRangeWei) : 0;
-      const dTermWei = modeFlags.usesD ? (candidate.kd * derivFiltered * simCfg.feeRangeWei) : 0;
-      const feedbackWei = pTermWei + iTermWei + dTermWei;
-      const chargedFeeWeiPerL2Gas = clampNum(
-        feedforwardWei + feedbackWei,
-        simCfg.minFeeWei,
-        simCfg.maxFeeWei
-      );
-
-      if (chargedFeeWeiPerL2Gas >= simCfg.maxFeeWei - 1e-9) clampMaxCount += 1;
-
-      const chargedFeeGwei = chargedFeeWeiPerL2Gas / 1e9;
       feeSum += chargedFeeGwei;
       feeSumSq += chargedFeeGwei * chargedFeeGwei;
       feeCount += 1;
       if (feePrev != null) {
-        const step = Math.abs(chargedFeeGwei - feePrev);
-        feeSteps.push(step);
+        feeSteps.push(Math.abs(chargedFeeGwei - feePrev));
       }
       feePrev = chargedFeeGwei;
 
-      if (l2GasPerProposal_i > 0) {
-        const breakEvenFeeWeiPerL2Gas = totalCostWei / l2GasPerProposal_i;
-        breakEvenFeeSum += breakEvenFeeWeiPerL2Gas / 1e9;
+      if (requiredFeeGwei != null) {
+        breakEvenFeeSum += requiredFeeGwei;
         breakEvenFeeCount += 1;
       }
+      if (clampState === 'max') clampMaxCount += 1;
 
-      const l2RevenueEthPerBlock =
-        (chargedFeeWeiPerL2Gas * simCfg.l2GasPerL1BlockSeries[i]) / 1e18;
-      pendingRevenueEth += l2RevenueEthPerBlock;
-
-      const posted = ((i + 1) % simCfg.postEveryBlocks) === 0;
-      if (posted) {
-        const postingRevenueEth = pendingRevenueEth;
-        if (postingRevenueEth + 1e-12 >= totalCostWei / 1e18) postBreakEvenCount += 1;
+      if (postBreakEven != null) {
         postCount += 1;
-        vault += postingRevenueEth;
-        pendingRevenueEth = 0;
-        vault -= totalCostWei / 1e18;
+        if (postBreakEven) postBreakEvenCount += 1;
       }
-      vaultSeries[local] = vault;
 
       // Keep health metric consistent with score card: max under-target gap.
       const gap = vault - simCfg.targetVaultEth;
@@ -2699,10 +2425,8 @@
         currentStreak = 0;
       }
       deficitAreaBand += Math.max(0, deadbandFloor - vault);
-      epsilonPrev = epsilon;
     }
 
-    const lastVault = vaultSeries[n - 1];
     const underTargetRatio = n > 0 ? (underTargetCount / n) : 0;
     const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
     const dPost = 1 - postBreakEvenRatio;
@@ -2750,7 +2474,7 @@
       kp: candidate.kp,
       ki: candidate.ki,
       kd: candidate.kd,
-      iMax: Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax,
+      iMax: iMaxSweep,
       nBlocks: n,
       healthBadness,
       uxBadness,
@@ -2993,12 +2717,14 @@
       l1GasUsed,
       blobMode,
       fixedNumBlobs,
-      txGas: blobModel.txGas,
-      txBytes: blobModel.txBytes,
-      batchOverheadBytes: blobModel.batchOverheadBytes,
-      compressionRatio: blobModel.compressionRatio,
-      blobUtilization: blobModel.blobUtilization,
-      minBlobsPerProposal: blobModel.minBlobsPerProposal,
+      blobModel: {
+        txGas: blobModel.txGas,
+        txBytes: blobModel.txBytes,
+        batchOverheadBytes: blobModel.batchOverheadBytes,
+        compressionRatio: blobModel.compressionRatio,
+        blobUtilization: blobModel.blobUtilization,
+        minBlobsPerProposal: blobModel.minBlobsPerProposal
+      },
       priorityFeeWei,
       dffBlocks,
       dfbBlocks,
@@ -3008,7 +2734,6 @@
       minFeeWei,
       maxFeeWei,
       maxFeeGwei,
-      feeRangeWei: maxFeeWei - minFeeWei,
       pTermMinWei,
       initialVaultEth,
       targetVaultEth,
