@@ -26,6 +26,7 @@
   const SWEEP_I_MAX_VALUES = Object.freeze([5.0, 10.0, 100.0]);
   const SWEEP_MAX_BLOCKS = 200000;
   const MAX_SAVED_RUNS = 6;
+  const SAVED_RUNS_STORAGE_KEY = 'fee_history_interactive_saved_runs_v1';
   const SAVED_RUN_COLORS = Object.freeze([
     '#0ea5e9',
     '#f97316',
@@ -567,6 +568,11 @@
       recalcDerivedSeries();
       clearParamsStale();
       applyRange(nextMin, nextMax, null);
+      if (savedRuns.length) {
+        rerunSavedRunsForCurrentRange();
+        renderSavedRunsList();
+        refreshComparisonPlots();
+      }
       setStatus(`Loaded dataset: ${meta.label || id}`);
     } finally {
       setUiBusy(false);
@@ -1360,12 +1366,93 @@
     }
   }
 
+  function sanitizeSavedRun(runLike) {
+    if (!runLike || typeof runLike !== 'object') return null;
+    const id = Math.floor(Number(runLike.id));
+    if (!Number.isFinite(id) || id <= 0) return null;
+    const params = runLike.params;
+    if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
+
+    const minBlockNum = Math.floor(Number(runLike.minBlock));
+    const maxBlockNum = Math.floor(Number(runLike.maxBlock));
+    const lastRecomputedAtNum = Number(runLike.lastRecomputedAt);
+    const tpsNum = Number(runLike.tps);
+
+    return {
+      id,
+      visible: runLike.visible !== false,
+      datasetId: runLike.datasetId == null ? '' : String(runLike.datasetId),
+      minBlock: Number.isFinite(minBlockNum) ? minBlockNum : 0,
+      maxBlock: Number.isFinite(maxBlockNum) ? maxBlockNum : 0,
+      lastRecomputedAt: Number.isFinite(lastRecomputedAtNum) ? lastRecomputedAtNum : 0,
+      tps: Number.isFinite(tpsNum) ? tpsNum : NaN,
+      params,
+      series: { chargedFee: [], vault: [] },
+    };
+  }
+
+  function saveSavedRunsToStorage() {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      const payload = {
+        savedRunSeq: savedRunSeq,
+        showCurrentRun: showCurrentRun,
+        runs: savedRuns.map(function (run) {
+          return {
+            id: run.id,
+            visible: run.visible !== false,
+            datasetId: run.datasetId == null ? '' : String(run.datasetId),
+            minBlock: run.minBlock,
+            maxBlock: run.maxBlock,
+            lastRecomputedAt: run.lastRecomputedAt || 0,
+            tps: run.tps,
+            params: run.params,
+          };
+        })
+      };
+      window.localStorage.setItem(SAVED_RUNS_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {
+      // Storage may be unavailable or full; keep in-memory behavior.
+    }
+  }
+
+  function loadSavedRunsFromStorage() {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      const raw = window.localStorage.getItem(SAVED_RUNS_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return;
+
+      const incomingRuns = Array.isArray(parsed.runs) ? parsed.runs : [];
+      const clippedRuns = incomingRuns.slice(-MAX_SAVED_RUNS);
+      const loadedRuns = [];
+      let maxId = 0;
+
+      for (const item of clippedRuns) {
+        const run = sanitizeSavedRun(item);
+        if (!run) continue;
+        loadedRuns.push(run);
+        if (run.id > maxId) maxId = run.id;
+      }
+
+      savedRuns = loadedRuns;
+      const seqNum = Math.floor(Number(parsed.savedRunSeq));
+      savedRunSeq = Math.max(maxId, Number.isFinite(seqNum) ? seqNum : 0);
+      showCurrentRun = parsed.showCurrentRun !== false;
+    } catch (_) {
+      // Ignore bad storage payload and keep defaults.
+    }
+  }
+
   function syncCurrentRunButtonLabel() {
     if (!toggleCurrentRunBtn) return;
     toggleCurrentRunBtn.textContent = showCurrentRun ? 'Hide current run' : 'Show current run';
   }
 
   function runMatchesCurrentView(run) {
+    if (!datasetReady || !blocks.length) return false;
     if (!run || !run.series) return false;
     const n = blocks.length;
     return (
@@ -1592,6 +1679,7 @@
       run.lastRecomputedAt = nowTs;
       rerunCount += 1;
     }
+    if (rerunCount > 0) saveSavedRunsToStorage();
     return rerunCount;
   }
 
@@ -1675,6 +1763,7 @@
 
   function deleteSavedRun(runId) {
     savedRuns = savedRuns.filter(function (r) { return r.id !== runId; });
+    saveSavedRunsToStorage();
     renderSavedRunsList();
     refreshComparisonPlots();
     setSavedRunsActionText(`Deleted run #${runId}.`);
@@ -1682,6 +1771,7 @@
 
   function clearSavedRuns() {
     savedRuns = [];
+    saveSavedRunsToStorage();
     renderSavedRunsList();
     refreshComparisonPlots();
     setSavedRunsActionText('Cleared saved runs.');
@@ -1689,6 +1779,7 @@
 
   function toggleCurrentRunView() {
     showCurrentRun = !showCurrentRun;
+    saveSavedRunsToStorage();
     syncCurrentRunButtonLabel();
     refreshComparisonPlots();
     if (showCurrentRun) {
@@ -1747,6 +1838,7 @@
     } else {
       setStatus(`Saved run #${run.id} (TPS ${formatNum(run.tps, 3)}).`);
     }
+    saveSavedRunsToStorage();
     setSavedRunsActionText(`Saved run #${run.id}.`);
   }
 
@@ -3499,6 +3591,7 @@
       const run = savedRuns.find(function (r) { return r.id === runId; });
       if (!run) return;
       run.visible = Boolean(target.checked);
+      saveSavedRunsToStorage();
       renderSavedRunsList();
       refreshComparisonPlots();
     });
@@ -3787,6 +3880,7 @@
     }
   }
 
+  loadSavedRunsFromStorage();
   markScoreStale('not computed yet');
   renderSavedRunsList();
   syncCurrentRunButtonLabel();
