@@ -27,6 +27,9 @@
   const SWEEP_MAX_BLOCKS = 200000;
   const MAX_SAVED_RUNS = 6;
   const SAVED_RUNS_STORAGE_KEY = 'fee_history_interactive_saved_runs_v1';
+  const SHARED_RUNS_HASH_KEY = 'sharedRuns';
+  const SHARED_RUNS_PAYLOAD_VERSION = 1;
+  const SHARED_RUNS_MAX_URL_LENGTH = 200000;
   const SAVED_RUN_COLORS = Object.freeze([
     '#0ea5e9',
     '#f97316',
@@ -212,6 +215,7 @@
   const sweepRangeCount = document.getElementById('sweepRangeCount');
   const sweepHover = document.getElementById('sweepHover');
   const saveRunBtn = document.getElementById('saveRunBtn');
+  const shareRunsBtn = document.getElementById('shareRunsBtn');
   const toggleCurrentRunBtn = document.getElementById('toggleCurrentRunBtn');
   const recomputeSavedRunsBtn = document.getElementById('recomputeSavedRunsBtn');
   const updateAssumptionsRecomputeSavedRunsBtn = document.getElementById('updateAssumptionsRecomputeSavedRunsBtn');
@@ -349,6 +353,93 @@
     } catch (e) {
       return null;
     }
+  }
+
+  function selectedSharedRunsFromHash() {
+    try {
+      const rawHash = window.location.hash || '';
+      const hashBody = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
+      if (!hashBody) return null;
+      const params = new URLSearchParams(hashBody);
+      const token = params.get(SHARED_RUNS_HASH_KEY);
+      return token ? String(token) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function bytesToBase64Url(bytes) {
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function base64UrlToBytes(raw) {
+    const normalized = String(raw || '').replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = normalized.length % 4 === 0 ? 0 : (4 - (normalized.length % 4));
+    const padded = normalized + '='.repeat(padLen);
+    const binary = atob(padded);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      out[i] = binary.charCodeAt(i);
+    }
+    return out;
+  }
+
+  async function encodeSharedRunsToken(payload) {
+    const json = JSON.stringify(payload);
+    const textBytes = new TextEncoder().encode(json);
+    return `plain.${bytesToBase64Url(textBytes)}`;
+  }
+
+  async function decodeSharedRunsToken(token) {
+    const raw = String(token || '');
+    const dot = raw.indexOf('.');
+    if (dot <= 0) throw new Error('missing shared-runs codec');
+    const codec = raw.slice(0, dot);
+    const dataPart = raw.slice(dot + 1);
+    if (!dataPart) throw new Error('missing shared-runs payload');
+    if (codec !== 'plain') throw new Error(`unsupported shared-runs codec "${codec}"`);
+
+    const textBytes = base64UrlToBytes(dataPart);
+    const json = new TextDecoder().decode(textBytes);
+    return JSON.parse(json);
+  }
+
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        const writePromise = navigator.clipboard.writeText(text);
+        const timeoutPromise = new Promise(function (_, reject) {
+          setTimeout(function () {
+            reject(new Error('clipboard write timed out'));
+          }, 1200);
+        });
+        await Promise.race([writePromise, timeoutPromise]);
+        return true;
+      } catch (_) {
+        // fall through to legacy copy path
+      }
+    }
+
+    const ta = document.createElement('textarea');
+    ta.value = String(text || '');
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.left = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (!copied) throw new Error('clipboard copy failed');
+    return true;
   }
 
   function updateUrlQueryState(datasetId, minBlock = null, maxBlock = null) {
@@ -1453,6 +1544,7 @@
     const savedRuns = savedRunManager.getRuns();
     if (!savedRunsStatus) return;
     savedRunsStatus.textContent = `${savedRuns.length} / ${MAX_SAVED_RUNS} saved`;
+    if (shareRunsBtn) shareRunsBtn.disabled = savedRuns.length === 0;
     if (clearSavedRunsBtn) clearSavedRunsBtn.disabled = savedRuns.length === 0;
     if (recomputeSavedRunsBtn) recomputeSavedRunsBtn.disabled = savedRuns.length === 0;
     if (updateAssumptionsRecomputeSavedRunsBtn) {
@@ -1651,6 +1743,57 @@
       return rerunCount;
     }
 
+    function exportShareState() {
+      return {
+        v: SHARED_RUNS_PAYLOAD_VERSION,
+        runs: runs.map(function (run) {
+          return {
+            name: normalizeRunName(run.name),
+            visible: run.visible !== false,
+            solidLine: run.solidLine === true,
+            datasetId: run.datasetId == null ? '' : String(run.datasetId),
+            minBlock: run.minBlock,
+            maxBlock: run.maxBlock,
+            tps: run.tps,
+            params: run.params,
+          };
+        })
+      };
+    }
+
+    function importShareState(sharedLike) {
+      if (!sharedLike || typeof sharedLike !== 'object') return 0;
+      if (Number(sharedLike.v) !== SHARED_RUNS_PAYLOAD_VERSION) return 0;
+      const rawRuns = Array.isArray(sharedLike.runs) ? sharedLike.runs : [];
+      if (!rawRuns.length) return 0;
+
+      const clipped = rawRuns.slice(0, MAX_SAVED_RUNS);
+      const imported = [];
+      for (const raw of clipped) {
+        const candidate = sanitizeSavedRun({
+          id: imported.length + 1,
+          visible: raw && raw.visible !== false,
+          solidLine: Boolean(raw && raw.solidLine),
+          name: raw ? raw.name : '',
+          datasetId: raw ? raw.datasetId : '',
+          minBlock: raw ? raw.minBlock : 0,
+          maxBlock: raw ? raw.maxBlock : 0,
+          lastRecomputedAt: 0,
+          tps: raw ? raw.tps : NaN,
+          params: raw ? raw.params : null,
+        });
+        if (!candidate) continue;
+        imported.push(candidate);
+      }
+
+      if (!imported.length) return 0;
+      runs = imported;
+      seq = imported.length;
+      showCurrent = false;
+      persist();
+      return imported.length;
+    }
+
     return {
       loadFromStorage,
       persist,
@@ -1663,6 +1806,8 @@
       clear,
       addRun,
       recomputeForRange,
+      exportShareState,
+      importShareState,
     };
   }
 
@@ -2024,6 +2169,62 @@
       setStatus(`Saved run #${runId} (TPS ${formatNum(run.tps, 3)}).`);
     }
     setSavedRunsActionText(`Saved run #${runId}.`);
+  }
+
+  async function copySavedRunsShareLink() {
+    const shareState = savedRunManager.exportShareState();
+    if (!shareState.runs.length) {
+      setSavedRunsActionText('No saved runs to share.');
+      setStatus('No saved runs to share.');
+      return;
+    }
+
+    const token = await encodeSharedRunsToken(shareState);
+    const url = new URL(window.location.href);
+    const hashBody = url.hash && url.hash.startsWith('#') ? url.hash.slice(1) : '';
+    const hashParams = new URLSearchParams(hashBody);
+    hashParams.set(SHARED_RUNS_HASH_KEY, token);
+    url.hash = hashParams.toString();
+    const shareUrl = url.toString();
+
+    if (shareUrl.length > SHARED_RUNS_MAX_URL_LENGTH) {
+      throw new Error(
+        `shared link is too long (${shareUrl.length.toLocaleString()} chars, max ${SHARED_RUNS_MAX_URL_LENGTH.toLocaleString()})`
+      );
+    }
+
+    window.history.replaceState(null, '', shareUrl);
+    await copyTextToClipboard(shareUrl);
+
+    const suffix = shareState.runs.length === 1 ? '' : 's';
+    setSavedRunsActionText(`Copied share link (${shareState.runs.length} run${suffix}).`);
+    setStatus(`Copied share link with ${shareState.runs.length} saved run${suffix}.`);
+  }
+
+  async function importSharedRunsFromHashIfPresent() {
+    const token = selectedSharedRunsFromHash();
+    if (!token) return 0;
+
+    let payload;
+    try {
+      payload = await decodeSharedRunsToken(token);
+    } catch (err) {
+      setSavedRunsActionText('Failed to parse shared link.');
+      setStatus(`Failed to parse shared-runs link: ${err && err.message ? err.message : err}`);
+      return 0;
+    }
+
+    const importedCount = savedRunManager.importShareState(payload);
+    if (!importedCount) {
+      setSavedRunsActionText('Shared link had no valid runs.');
+      setStatus('Shared-runs link is valid JSON but had no usable saved runs.');
+      return 0;
+    }
+
+    const suffix = importedCount === 1 ? '' : 's';
+    setSavedRunsActionText(`Loaded ${importedCount} shared run${suffix}.`);
+    setStatus(`Loaded ${importedCount} shared run${suffix} from link. Current run hidden.`);
+    return importedCount;
   }
 
   function refreshComparisonPlots() {
@@ -3484,6 +3685,18 @@
     saveCurrentRun();
   });
 
+  shareRunsBtn.addEventListener('click', function () {
+    runAsyncUiTask('Preparing shared-runs link...', async function () {
+      try {
+        await copySavedRunsShareLink();
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        setSavedRunsActionText('Failed to create share link.');
+        setStatus(`Failed to create shared-runs link: ${msg}`);
+      }
+    });
+  });
+
   toggleCurrentRunBtn.addEventListener('click', function () {
     toggleCurrentRunView();
   });
@@ -3780,11 +3993,16 @@
     }
   }
 
-  savedRunManager.loadFromStorage();
-  markScoreStale('not computed yet');
-  renderSavedRunsList();
-  syncCurrentRunButtonLabel();
-  syncFeeMechanismUi();
-  syncBlobModeUi();
-  initDatasets();
+  async function initApp() {
+    savedRunManager.loadFromStorage();
+    await importSharedRunsFromHashIfPresent();
+    markScoreStale('not computed yet');
+    renderSavedRunsList();
+    syncCurrentRunButtonLabel();
+    syncFeeMechanismUi();
+    syncBlobModeUi();
+    initDatasets();
+  }
+
+  initApp();
 })();
