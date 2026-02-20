@@ -8,6 +8,17 @@ Run from repo root:
 cd /home/lin/workspace/taiko-fee-simulator
 ```
 
+### 0) One-command deterministic pipeline (recommended)
+
+```bash
+npm run pipeline:deterministic
+```
+
+This runs, in order:
+- interactive dataset payload generation
+- core simulator tests
+- Playwright visual regression tests
+
 ### 1) Refresh interactive dataset payloads
 
 ```bash

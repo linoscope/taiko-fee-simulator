@@ -11,6 +11,7 @@ This repo contains:
 - `script/`
   - `fetch_eth_l1_fee_history.py`: fetches L1 base/blob fee history to CSV + summary JSON.
   - `generate_interactive_fee_uplot.py`: generates interactive dataset payload JS files (data only).
+  - `run_deterministic_pipeline.sh`: fixed-sequence local pipeline for generation + core tests + visual regression.
 - `data/`
   - Raw fetched CSV/JSON datasets.
   - `plots/`: generated interactive pages and static assets.
@@ -87,6 +88,12 @@ Notes:
 - The script does not overwrite `data/plots/fee_history_interactive.html` or `data/plots/fee_history_interactive_app.js`.
 
 ## Tests
+
+Run the deterministic full pipeline (generation + core tests + visual regression):
+
+```bash
+npm run pipeline:deterministic
+```
 
 Run simulator core tests:
 

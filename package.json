@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Visual regression and simulation tests for taiko-fee-simulator",
   "scripts": {
+    "pipeline:deterministic": "bash script/run_deterministic_pipeline.sh",
     "test:core": "node --test data/plots/tests/*.test.js",
     "visual:install": "playwright install chromium",
     "visual:test": "playwright test tests/visual",
