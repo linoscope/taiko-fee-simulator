@@ -827,6 +827,8 @@
     const iMaxRaw = Number(raw.iMax);
     const iMin = Number.isFinite(iMinRaw) ? iMinRaw : 0;
     const iMax = Number.isFinite(iMaxRaw) ? iMaxRaw : 10;
+    const dffRaw = Number(raw.dffBlocks);
+    const dfbRaw = Number(raw.dfbBlocks);
     const eipCfg = raw.eip1559 || {};
     const arbCfg = raw.arbitrum || {};
     return {
@@ -852,8 +854,8 @@
       kd: Math.max(0, Number(raw.kd) || 0),
       iMin: Math.min(iMin, iMax),
       iMax: Math.max(iMin, iMax),
-      dffBlocks: Math.max(0, Math.floor(Number(raw.dffBlocks) || 0)),
-      dfbBlocks: Math.max(0, Math.floor(Number(raw.dfbBlocks) || 0)),
+      dffBlocks: Number.isFinite(dffRaw) ? Math.max(0, Math.floor(dffRaw)) : 5,
+      dfbBlocks: Number.isFinite(dfbRaw) ? Math.max(1, Math.floor(dfbRaw)) : 5,
       derivBeta: clampNum(Number.isFinite(Number(raw.derivBeta)) ? Number(raw.derivBeta) : 0.8, 0, 1),
       minFeeGwei,
       maxFeeGwei,
@@ -2213,7 +2215,7 @@
       iMin: parseNumber(iMinInput, -5),
       iMax: parseNumber(iMaxInput, 5),
       dffBlocks: parseNonNegativeInt(dffBlocksInput, 5),
-      dfbBlocks: parseNonNegativeInt(dfbBlocksInput, 5),
+      dfbBlocks: parsePositiveInt(dfbBlocksInput, 5),
       derivBeta: clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1),
       minFeeGwei: parsePositive(minFeeGweiInput, 0.01),
       maxFeeGwei: parsePositive(maxFeeGweiInput, 1),
@@ -2787,7 +2789,7 @@
       blobModel: parseBlobModelInputs(),
       priorityFeeGwei: parsePositive(priorityFeeGweiInput, 0),
       dffBlocks: parseNonNegativeInt(dffBlocksInput, 5),
-      dfbBlocks: parseNonNegativeInt(dfbBlocksInput, 5),
+      dfbBlocks: parsePositiveInt(dfbBlocksInput, 5),
       derivBeta: clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1),
       pTermMinGwei: parseNumber(pMinGweiInput, 0.0),
       iMin: parseNumber(iMinInput, -5),

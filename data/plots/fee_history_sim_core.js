@@ -251,8 +251,8 @@
     const fixedNumBlobs = Math.max(0, toNumber(cfg.fixedNumBlobs, 0));
     const blobModel = cfg.blobModel || {};
     const priorityFeeWei = Math.max(0, toNumber(cfg.priorityFeeWei, 0));
-    const dffBlocks = Math.max(0, Math.floor(toNumber(cfg.dffBlocks, 0)));
-    const dfbBlocks = Math.max(0, Math.floor(toNumber(cfg.dfbBlocks, 0)));
+    const dffBlocks = Math.max(0, Math.floor(toNumber(cfg.dffBlocks, 5)));
+    const dfbBlocks = Math.max(1, Math.floor(toNumber(cfg.dfbBlocks, 5)));
     const derivBeta = clampNum(toNumber(cfg.derivBeta, 0.8), 0, 1);
     const kp = Math.max(0, toNumber(cfg.kp, 0));
     const ki = Math.max(0, toNumber(cfg.ki, 0));

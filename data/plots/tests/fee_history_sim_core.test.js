@@ -114,6 +114,24 @@ test('taiko simulation keeps charged fee clamped and emits finite breakdown valu
   assertFiniteOrNullArray(out.integral, 'integral');
 });
 
+test('taiko clamps dfbBlocks to 1 when callers pass 0', () => {
+  const sim = loadSimCore();
+  const cfgZero = baseConfigForMechanism('taiko');
+  cfgZero.postEveryBlocks = 1;
+  cfgZero.initialVaultEth = 1;
+  cfgZero.targetVaultEth = 10;
+  cfgZero.l1GasUsed = 250000;
+  cfgZero.dfbBlocks = 0;
+
+  const cfgOne = { ...cfgZero, dfbBlocks: 1 };
+  const outZero = sim.simulateSeries(cfgZero);
+  const outOne = sim.simulateSeries(cfgOne);
+
+  assert.deepEqual(outZero.chargedFeeGwei, outOne.chargedFeeGwei);
+  assert.deepEqual(outZero.vaultEth, outOne.vaultEth);
+  assert.deepEqual(outZero.epsilon, outOne.epsilon);
+});
+
 test('eip1559 mode moves fee away from minimum under sustained deficit', () => {
   const sim = loadSimCore();
   const cfg = baseConfigForMechanism('eip1559');
