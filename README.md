@@ -10,8 +10,10 @@ This repo contains:
 
 - `script/`
   - `fetch_eth_l1_fee_history.py`: fetches L1 base/blob fee history to CSV + summary JSON.
-  - `generate_interactive_fee_uplot.py`: generates interactive dataset payload JS files (data only).
+  - `generate_interactive_fee_uplot.py`: generates interactive dataset payload JS files and manifest artifacts.
   - `run_deterministic_pipeline.sh`: fixed-sequence local pipeline for generation + core tests + visual regression.
+- `config/`
+  - `interactive_manifest.json`: source-of-truth dataset metadata, labels, initial dataset, and range presets.
 - `data/`
   - Raw fetched CSV/JSON datasets.
   - `plots/`: generated interactive pages and static assets.
@@ -75,15 +77,15 @@ Refresh multi-dataset payload files consumed by the static UI:
 
 ```bash
 python3 script/generate_interactive_fee_uplot.py \
-  --dataset "current365|data/eth_l1_fee_365d_20260206T195430Z.csv" \
-  --dataset "prior365|data/eth_l1_fee_365d_20260207T042312Z.csv" \
-  --dataset "year2021|data/eth_l1_fee_blocks_11565019_13916165_20260207T065924Z.csv" \
+  --manifest-config config/interactive_manifest.json \
   --max-points 160000 \
-  --out-js data/plots/fee_history_interactive_app.js
+  --out-js data/plots/fee_history_interactive_app.js \
+  --out-manifest-js data/plots/fee_history_interactive_manifest.js
 ```
 
 Notes:
-- `--dataset` format: `<id>|<csv_path>` (repeatable).
+- Canonical dataset/preset metadata lives in `config/interactive_manifest.json`.
+- `--dataset` format `<id>|<csv_path>` is still supported for payload-only generation.
 - Time anchors come from each dataset summary JSON only.
 - The script does not overwrite `data/plots/fee_history_interactive.html` or `data/plots/fee_history_interactive_app.js`.
 
