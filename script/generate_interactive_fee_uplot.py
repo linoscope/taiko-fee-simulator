@@ -146,19 +146,14 @@ def build_dataset_payload_js(dataset_id, blocks, base, blob, time_anchor):
 def downsample_series(blocks, base, blob, max_points: int):
     n = len(blocks)
     if max_points <= 0 or n <= max_points:
-        return blocks, base, blob, 1
+        return blocks, base, blob
 
     step = max(1, (n - 1) // max_points + 1)
     idxs = list(range(0, n, step))
     if idxs[-1] != n - 1:
         idxs.append(n - 1)
 
-    return (
-        [blocks[i] for i in idxs],
-        [base[i] for i in idxs],
-        [blob[i] for i in idxs],
-        step,
-    )
+    return [blocks[i] for i in idxs], [base[i] for i in idxs], [blob[i] for i in idxs]
 
 
 def main():
@@ -228,7 +223,7 @@ def main():
     for spec in dataset_specs:
         blocks, base, blob = read_fee_csv(spec["csv_path"])
         time_anchor = read_time_anchor(spec["csv_path"], blocks[0], blocks[-1])
-        blocks, base, blob, _sample_step = downsample_series(blocks, base, blob, max(args.max_points, 0))
+        blocks, base, blob = downsample_series(blocks, base, blob, max(args.max_points, 0))
 
         safe_id = sanitize_dataset_id(spec["id"])
         payload_name = f"{out_js.stem}_data_{safe_id}.js"

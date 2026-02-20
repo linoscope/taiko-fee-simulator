@@ -4,14 +4,14 @@
   const L1_BLOCK_TIME_SECONDS = 12;
   const DEFAULT_FEE_MECHANISM = "taiko";
   const DEFAULT_BLOB_MODE = "dynamic";
-  const DEFAULT_TX_GAS = 70000.000000000000;
-  const DEFAULT_TX_BYTES = 120.000000000000;
-  const DEFAULT_BATCH_OVERHEAD_BYTES = 1200.000000000000;
-  const DEFAULT_COMPRESSION_RATIO = 1.000000000000;
-  const DEFAULT_BLOB_UTILIZATION = 0.950000000000;
-  const DEFAULT_MIN_BLOBS_PER_PROPOSAL = 1.000000000000;
-  const DEFAULT_ALPHA_GAS = 0.000000000000;
-  const DEFAULT_ALPHA_BLOB = 0.000000000000;
+  const DEFAULT_TX_GAS = 70000;
+  const DEFAULT_TX_BYTES = 120;
+  const DEFAULT_BATCH_OVERHEAD_BYTES = 1200;
+  const DEFAULT_COMPRESSION_RATIO = 1;
+  const DEFAULT_BLOB_UTILIZATION = 0.95;
+  const DEFAULT_MIN_BLOBS_PER_PROPOSAL = 1;
+  const DEFAULT_ALPHA_GAS = 0;
+  const DEFAULT_ALPHA_BLOB = 0;
   const DEFAULT_EIP1559_DENOMINATOR = 8;
   const DEFAULT_ARB_INITIAL_PRICE_GWEI = 0.001000000000;
   const DEFAULT_ARB_INERTIA = 10;
@@ -716,11 +716,6 @@
     return Number.isFinite(v) ? v : fallback;
   }
 
-  function parseWeight(inputEl, fallback) {
-    const v = Number(inputEl && inputEl.value);
-    return Number.isFinite(v) && v >= 0 ? v : fallback;
-  }
-
   function lowerBound(arr, x) {
     let lo = 0;
     let hi = arr.length;
@@ -1047,21 +1042,21 @@
       ? Math.max(0, feeMean - breakEvenFeeMean) / breakEvenFeeMean
       : 0;
 
-    const wDraw = parseWeight(healthWDrawInput, 0.35);
-    const wUnder = parseWeight(healthWUnderInput, 0.25);
-    const wArea = parseWeight(healthWAreaInput, 0.2);
-    const wStreak = parseWeight(healthWStreakInput, 0.1);
-    const wPostBE = parseWeight(healthWPostBEInput, 0.2);
+    const wDraw = parsePositive(healthWDrawInput, 0.35);
+    const wUnder = parsePositive(healthWUnderInput, 0.25);
+    const wArea = parsePositive(healthWAreaInput, 0.2);
+    const wStreak = parsePositive(healthWStreakInput, 0.1);
+    const wPostBE = parsePositive(healthWPostBEInput, 0.2);
 
-    const wStd = parseWeight(uxWStdInput, 0.2);
-    const wP95 = parseWeight(uxWP95Input, 0.2);
-    const wP99 = parseWeight(uxWP99Input, 0.1);
-    const wMax = parseWeight(uxWMaxStepInput, 0.05);
-    const wClamp = parseWeight(uxWClampInput, 0.05);
-    const wLevel = parseWeight(uxWLevelInput, 0.4);
+    const wStd = parsePositive(uxWStdInput, 0.2);
+    const wP95 = parsePositive(uxWP95Input, 0.2);
+    const wP99 = parsePositive(uxWP99Input, 0.1);
+    const wMax = parsePositive(uxWMaxStepInput, 0.05);
+    const wClamp = parsePositive(uxWClampInput, 0.05);
+    const wLevel = parsePositive(uxWLevelInput, 0.4);
 
-    const wHealth = parseWeight(scoreWeightHealthInput, 0.75);
-    const wUx = parseWeight(scoreWeightUxInput, 0.25);
+    const wHealth = parsePositive(scoreWeightHealthInput, 0.75);
+    const wUx = parsePositive(scoreWeightUxInput, 0.25);
 
     const healthBadness = normalizedWeightedSum(
       [dDraw, dUnder, dArea, dStreak, dPost],
@@ -2080,20 +2075,20 @@
 
   function parseScoringWeights() {
     return {
-      deadbandPct: parseWeight(deficitDeadbandPctInput, 5.0),
-      wHealth: parseWeight(scoreWeightHealthInput, 0.75),
-      wUx: parseWeight(scoreWeightUxInput, 0.25),
-      wDraw: parseWeight(healthWDrawInput, 0.35),
-      wUnder: parseWeight(healthWUnderInput, 0.25),
-      wArea: parseWeight(healthWAreaInput, 0.2),
-      wStreak: parseWeight(healthWStreakInput, 0.1),
-      wPostBE: parseWeight(healthWPostBEInput, 0.2),
-      wStd: parseWeight(uxWStdInput, 0.2),
-      wP95: parseWeight(uxWP95Input, 0.2),
-      wP99: parseWeight(uxWP99Input, 0.1),
-      wMaxStep: parseWeight(uxWMaxStepInput, 0.05),
-      wClamp: parseWeight(uxWClampInput, 0.05),
-      wLevel: parseWeight(uxWLevelInput, 0.4)
+      deadbandPct: parsePositive(deficitDeadbandPctInput, 5.0),
+      wHealth: parsePositive(scoreWeightHealthInput, 0.75),
+      wUx: parsePositive(scoreWeightUxInput, 0.25),
+      wDraw: parsePositive(healthWDrawInput, 0.35),
+      wUnder: parsePositive(healthWUnderInput, 0.25),
+      wArea: parsePositive(healthWAreaInput, 0.2),
+      wStreak: parsePositive(healthWStreakInput, 0.1),
+      wPostBE: parsePositive(healthWPostBEInput, 0.2),
+      wStd: parsePositive(uxWStdInput, 0.2),
+      wP95: parsePositive(uxWP95Input, 0.2),
+      wP99: parsePositive(uxWP99Input, 0.1),
+      wMaxStep: parsePositive(uxWMaxStepInput, 0.05),
+      wClamp: parsePositive(uxWClampInput, 0.05),
+      wLevel: parsePositive(uxWLevelInput, 0.4)
     };
   }
 
