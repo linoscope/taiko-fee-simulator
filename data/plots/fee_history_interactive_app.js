@@ -949,18 +949,31 @@
     numBlobsEstimatedInput.value = formatNum(estimated, 2);
   }
 
-  function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {
-    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return null;
-    const i0 = lowerBound(blocks, minBlock);
-    const i1 = upperBound(blocks, maxBlock) - 1;
-    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return null;
-
-    const n = i1 - i0 + 1;
+  function computeScoredMetrics({
+    chargedFeeSeries,
+    vaultSeries,
+    requiredFeeSeries,
+    clampStateSeries,
+    postBreakEvenSeries,
+    targetSeries = null,
+    targetVaultEth,
+    maxFeeGwei,
+    deadbandPct,
+    scoreCfg,
+    i0,
+    i1,
+    skipNullSeries = false,
+    fallbackTargetDenomToOne = false,
+  }) {
+    const start = Math.floor(Number(i0));
+    const end = Math.floor(Number(i1));
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+    const n = end - start + 1;
     if (n <= 0) return null;
 
-    const deadbandPct = parsePositive(deficitDeadbandPctInput, 5.0);
-    const deadbandFrac = deadbandPct / 100;
-    const feeScale = maxFeeGwei > 0 ? maxFeeGwei : 1;
+    const targetVault = Number.isFinite(Number(targetVaultEth)) ? Number(targetVaultEth) : 0;
+    const feeScale = Number(maxFeeGwei) > 0 ? Number(maxFeeGwei) : 1;
+    const deadbandFrac = Number(deadbandPct) / 100;
 
     let maxDrawdownEth = 0;
     let underCount = 0;
@@ -973,14 +986,20 @@
 
     let feeSum = 0;
     let feeSqSum = 0;
+    let feeCount = 0;
     let breakEvenFeeSum = 0;
     let breakEvenFeeCount = 0;
     const feeSteps = [];
     let maxStep = 0;
+    let feePrev = null;
 
-    for (let i = i0; i <= i1; i++) {
-      const target = derivedVaultTargetEth[i];
-      const vault = derivedVaultEth[i];
+    for (let i = start; i <= end; i++) {
+      const fee = chargedFeeSeries[i];
+      const vault = vaultSeries[i];
+      if (skipNullSeries && (fee == null || vault == null)) continue;
+
+      const targetRaw = targetSeries ? targetSeries[i] : targetVault;
+      const target = Number.isFinite(Number(targetRaw)) ? Number(targetRaw) : targetVault;
       const gap = vault - target;
       const deadbandFloor = target * (1 - deadbandFrac);
 
@@ -995,30 +1014,33 @@
       maxDrawdownEth = Math.max(maxDrawdownEth, Math.max(0, -gap));
       deficitAreaBand += Math.max(0, deadbandFloor - vault);
 
-      if (derivedClampState[i] === 'max') clampMaxCount += 1;
-      const postBreakEven = derivedPostBreakEvenFlag[i];
+      if (clampStateSeries[i] === 'max') clampMaxCount += 1;
+      const postBreakEven = postBreakEvenSeries[i];
       if (postBreakEven != null) {
         postCount += 1;
         if (postBreakEven) postBreakEvenCount += 1;
       }
 
-      const fee = derivedChargedFeeGwei[i];
       feeSum += fee;
       feeSqSum += fee * fee;
-      const breakEvenFee = derivedRequiredFeeGwei[i];
+      feeCount += 1;
+      const breakEvenFee = requiredFeeSeries[i];
       if (breakEvenFee != null && Number.isFinite(breakEvenFee)) {
         breakEvenFeeSum += breakEvenFee;
         breakEvenFeeCount += 1;
       }
-      if (i > i0) {
-        const step = Math.abs(fee - derivedChargedFeeGwei[i - 1]);
+
+      if (feePrev != null) {
+        const step = Math.abs(fee - feePrev);
         feeSteps.push(step);
         if (step > maxStep) maxStep = step;
       }
+      feePrev = fee;
     }
 
-    const feeMean = feeSum / n;
-    const feeVar = Math.max(0, (feeSqSum / n) - feeMean * feeMean);
+    const feeStatsCount = skipNullSeries ? feeCount : n;
+    const feeMean = feeStatsCount > 0 ? (feeSum / feeStatsCount) : 0;
+    const feeVar = feeStatsCount > 0 ? Math.max(0, (feeSqSum / feeStatsCount) - feeMean * feeMean) : 0;
     const feeStd = Math.sqrt(feeVar);
     const stepP95 = percentile(feeSteps, 95);
     const stepP99 = percentile(feeSteps, 99);
@@ -1028,10 +1050,11 @@
     const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
     const dPost = 1 - postBreakEvenRatio;
 
-    const dDraw = targetVaultEth > 0 ? (maxDrawdownEth / targetVaultEth) : 0;
+    const targetDenom = targetVault > 0 ? targetVault : (fallbackTargetDenomToOne ? 1 : 0);
+    const dDraw = targetDenom > 0 ? (maxDrawdownEth / targetDenom) : 0;
     const dUnder = underTargetRatio;
-    const dArea = targetVaultEth > 0 ? (deficitAreaBand / (targetVaultEth * n)) : 0;
-    const dStreak = worstStreak / n;
+    const dArea = targetDenom > 0 ? (deficitAreaBand / (targetDenom * n)) : 0;
+    const dStreak = n > 0 ? (worstStreak / n) : 0;
 
     const uStd = feeStd / feeScale;
     const uP95 = stepP95 / feeScale;
@@ -1042,74 +1065,116 @@
       ? Math.max(0, feeMean - breakEvenFeeMean) / breakEvenFeeMean
       : 0;
 
-    const wDraw = parsePositive(healthWDrawInput, 0.35);
-    const wUnder = parsePositive(healthWUnderInput, 0.25);
-    const wArea = parsePositive(healthWAreaInput, 0.2);
-    const wStreak = parsePositive(healthWStreakInput, 0.1);
-    const wPostBE = parsePositive(healthWPostBEInput, 0.2);
-
-    const wStd = parsePositive(uxWStdInput, 0.2);
-    const wP95 = parsePositive(uxWP95Input, 0.2);
-    const wP99 = parsePositive(uxWP99Input, 0.1);
-    const wMax = parsePositive(uxWMaxStepInput, 0.05);
-    const wClamp = parsePositive(uxWClampInput, 0.05);
-    const wLevel = parsePositive(uxWLevelInput, 0.4);
-
-    const wHealth = parsePositive(scoreWeightHealthInput, 0.75);
-    const wUx = parsePositive(scoreWeightUxInput, 0.25);
-
     const healthBadness = normalizedWeightedSum(
       [dDraw, dUnder, dArea, dStreak, dPost],
-      [wDraw, wUnder, wArea, wStreak, wPostBE]
+      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wStreak, scoreCfg.wPostBE]
     );
     const uxBadness = normalizedWeightedSum(
       [uStd, uP95, uP99, uMax, uClamp, uLevel],
-      [wStd, wP95, wP99, wMax, wClamp, wLevel]
+      [scoreCfg.wStd, scoreCfg.wP95, scoreCfg.wP99, scoreCfg.wMaxStep, scoreCfg.wClamp, scoreCfg.wLevel]
     );
-    const totalBadness = normalizedWeightedSum([healthBadness, uxBadness], [wHealth, wUx]);
+    const totalBadness = normalizedWeightedSum(
+      [healthBadness, uxBadness],
+      [scoreCfg.wHealth, scoreCfg.wUx]
+    );
 
-    scoreHealthBadness.textContent = formatNum(healthBadness, 6);
-    scoreUxBadness.textContent = formatNum(uxBadness, 6);
-    scoreTotalBadness.textContent = formatNum(totalBadness, 6);
+    return {
+      n,
+      deadbandPct,
+      maxDrawdownEth,
+      underTargetRatio,
+      postBreakEvenRatio,
+      deficitAreaBand,
+      worstStreak,
+      feeStd,
+      stepP95,
+      stepP99,
+      maxStep,
+      clampMaxRatio,
+      uLevel,
+      dDraw,
+      dUnder,
+      dArea,
+      dStreak,
+      dPost,
+      uStd,
+      uP95,
+      uP99,
+      uMax,
+      uClamp,
+      healthBadness,
+      uxBadness,
+      totalBadness,
+    };
+  }
+
+  function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {
+    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return null;
+    const i0 = lowerBound(blocks, minBlock);
+    const i1 = upperBound(blocks, maxBlock) - 1;
+    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return null;
+
+    const scoreCfg = parseScoringWeights();
+    const metrics = computeScoredMetrics({
+      chargedFeeSeries: derivedChargedFeeGwei,
+      vaultSeries: derivedVaultEth,
+      requiredFeeSeries: derivedRequiredFeeGwei,
+      clampStateSeries: derivedClampState,
+      postBreakEvenSeries: derivedPostBreakEvenFlag,
+      targetSeries: derivedVaultTargetEth,
+      targetVaultEth,
+      maxFeeGwei,
+      deadbandPct: scoreCfg.deadbandPct,
+      scoreCfg,
+      i0,
+      i1,
+      skipNullSeries: false,
+      fallbackTargetDenomToOne: false,
+    });
+    if (!metrics) return null;
+
+    scoreHealthBadness.textContent = formatNum(metrics.healthBadness, 6);
+    scoreUxBadness.textContent = formatNum(metrics.uxBadness, 6);
+    scoreTotalBadness.textContent = formatNum(metrics.totalBadness, 6);
     scoreWeightSummary.textContent =
-      `overall weights: health=${formatNum(wHealth, 3)}, ux=${formatNum(wUx, 3)}`;
+      `overall weights: health=${formatNum(scoreCfg.wHealth, 3)}, ux=${formatNum(scoreCfg.wUx, 3)}`;
 
-    healthMaxDrawdown.textContent = `${formatNum(maxDrawdownEth, 6)} ETH`;
-    healthUnderTargetRatio.textContent = `${formatNum(underTargetRatio, 4)}`;
-    healthPostBreakEvenRatio.textContent = `${formatNum(postBreakEvenRatio, 4)}`;
-    healthDeficitAreaBand.textContent = `${formatNum(deficitAreaBand, 6)} ETH*block`;
-    healthWorstDeficitStreak.textContent = `${formatNum(worstStreak, 0)} blocks`;
+    healthMaxDrawdown.textContent = `${formatNum(metrics.maxDrawdownEth, 6)} ETH`;
+    healthUnderTargetRatio.textContent = `${formatNum(metrics.underTargetRatio, 4)}`;
+    healthPostBreakEvenRatio.textContent = `${formatNum(metrics.postBreakEvenRatio, 4)}`;
+    healthDeficitAreaBand.textContent = `${formatNum(metrics.deficitAreaBand, 6)} ETH*block`;
+    healthWorstDeficitStreak.textContent = `${formatNum(metrics.worstStreak, 0)} blocks`;
 
-    uxFeeStd.textContent = `${formatNum(feeStd, 6)} gwei/L2gas`;
-    uxFeeStepP95.textContent = `${formatNum(stepP95, 6)} gwei/L2gas`;
-    uxFeeStepP99.textContent = `${formatNum(stepP99, 6)} gwei/L2gas`;
-    uxFeeStepMax.textContent = `${formatNum(maxStep, 6)} gwei/L2gas`;
-    uxClampMaxRatio.textContent = `${formatNum(clampMaxRatio, 4)}`;
-    uxFeeLevelMean.textContent = `${formatNum(uLevel, 4)}`;
+    uxFeeStd.textContent = `${formatNum(metrics.feeStd, 6)} gwei/L2gas`;
+    uxFeeStepP95.textContent = `${formatNum(metrics.stepP95, 6)} gwei/L2gas`;
+    uxFeeStepP99.textContent = `${formatNum(metrics.stepP99, 6)} gwei/L2gas`;
+    uxFeeStepMax.textContent = `${formatNum(metrics.maxStep, 6)} gwei/L2gas`;
+    uxClampMaxRatio.textContent = `${formatNum(metrics.clampMaxRatio, 4)}`;
+    uxFeeLevelMean.textContent = `${formatNum(metrics.uLevel, 4)}`;
 
     healthFormulaLine.textContent =
       `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wStreak*dStreak + wPostBE*dPost ` +
-      `(dDraw=${formatNum(dDraw, 4)}, dUnder=${formatNum(dUnder, 4)}, dArea=${formatNum(dArea, 4)}, dStreak=${formatNum(dStreak, 4)}, dPost=${formatNum(dPost, 4)})`;
+      `(dDraw=${formatNum(metrics.dDraw, 4)}, dUnder=${formatNum(metrics.dUnder, 4)}, dArea=${formatNum(metrics.dArea, 4)}, dStreak=${formatNum(metrics.dStreak, 4)}, dPost=${formatNum(metrics.dPost, 4)})`;
     uxFormulaLine.textContent =
       `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp + wLevel*uLevel ` +
-      `(uStd=${formatNum(uStd, 4)}, uP95=${formatNum(uP95, 4)}, uP99=${formatNum(uP99, 4)}, uMax=${formatNum(uMax, 4)}, uClamp=${formatNum(uClamp, 4)}, uLevel=${formatNum(uLevel, 4)})`;
+      `(uStd=${formatNum(metrics.uStd, 4)}, uP95=${formatNum(metrics.uP95, 4)}, uP99=${formatNum(metrics.uP99, 4)}, uMax=${formatNum(metrics.uMax, 4)}, uClamp=${formatNum(metrics.uClamp, 4)}, uLevel=${formatNum(metrics.uLevel, 4)})`;
     totalFormulaLine.textContent =
-      `total_badness = wHealth*health_badness + wUx*ux_badness = ${formatNum(totalBadness, 6)} ` +
-      `(deadband=${formatNum(deadbandPct, 2)}%, blocks=${n.toLocaleString()})`;
+      `total_badness = wHealth*health_badness + wUx*ux_badness = ${formatNum(metrics.totalBadness, 6)} ` +
+      `(deadband=${formatNum(metrics.deadbandPct, 2)}%, blocks=${metrics.n.toLocaleString()})`;
 
     if (scoreStatus) {
       scoreStatus.textContent =
         `Scored blocks ${blocks[i0].toLocaleString()}-${blocks[i1].toLocaleString()} ` +
-        `(${n.toLocaleString()} blocks).`;
+        `(${metrics.n.toLocaleString()} blocks).`;
     }
     if (scoreCard) scoreCard.classList.remove('stale');
     return {
       i0,
       i1,
-      n,
-      healthBadness,
-      uxBadness,
-      totalBadness
+      n: metrics.n,
+      healthBadness: metrics.healthBadness,
+      uxBadness: metrics.uxBadness,
+      totalBadness: metrics.totalBadness
     };
   }
 
@@ -2439,9 +2504,6 @@
       : Math.max(0, simCfg.alphaBlob);
     const candidateAlphaVariant = candidate.alphaVariant || 'current';
     const n = i1 - i0 + 1;
-    const targetDenom = simCfg.targetVaultEth > 0 ? simCfg.targetVaultEth : 1;
-    const feeDenom = simCfg.maxFeeGwei > 0 ? simCfg.maxFeeGwei : 1;
-    const deadbandFloor = simCfg.targetVaultEth * (1 - scoreCfg.deadbandPct / 100);
 
     const iMaxSweep = Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax;
     const simulation = simCore.simulateSeries({
@@ -2478,106 +2540,21 @@
       collectBreakdown: true
     });
 
-    const chargedSeries = simulation.chargedFeeGwei;
-    const vaultSeries = simulation.vaultEth;
-    const requiredSeries = simulation.requiredFeeGwei;
-    const clampSeries = simulation.clampState;
-    const postBreakEvenSeries = simulation.postBreakEvenFlag;
-    const feeSteps = [];
-    let feePrev = null;
-    let feeSum = 0;
-    let feeSumSq = 0;
-    let feeCount = 0;
-    let breakEvenFeeSum = 0;
-    let breakEvenFeeCount = 0;
-    let clampMaxCount = 0;
-    let maxDrawdownEth = 0;
-    let underTargetCount = 0;
-    let deficitAreaBand = 0;
-    let worstStreak = 0;
-    let currentStreak = 0;
-    let postCount = 0;
-    let postBreakEvenCount = 0;
-
-    for (let i = 0; i < n; i++) {
-      const chargedFeeGwei = chargedSeries[i];
-      const vault = vaultSeries[i];
-      const requiredFeeGwei = requiredSeries[i];
-      const clampState = clampSeries[i];
-      const postBreakEven = postBreakEvenSeries[i];
-      if (chargedFeeGwei == null || vault == null) continue;
-
-      feeSum += chargedFeeGwei;
-      feeSumSq += chargedFeeGwei * chargedFeeGwei;
-      feeCount += 1;
-      if (feePrev != null) {
-        feeSteps.push(Math.abs(chargedFeeGwei - feePrev));
-      }
-      feePrev = chargedFeeGwei;
-
-      if (requiredFeeGwei != null) {
-        breakEvenFeeSum += requiredFeeGwei;
-        breakEvenFeeCount += 1;
-      }
-      if (clampState === 'max') clampMaxCount += 1;
-
-      if (postBreakEven != null) {
-        postCount += 1;
-        if (postBreakEven) postBreakEvenCount += 1;
-      }
-
-      // Keep health metric consistent with score card: max under-target gap.
-      const gap = vault - simCfg.targetVaultEth;
-      if (-gap > maxDrawdownEth) maxDrawdownEth = -gap;
-
-      if (vault < deadbandFloor) {
-        underTargetCount += 1;
-        currentStreak += 1;
-        if (currentStreak > worstStreak) worstStreak = currentStreak;
-      } else {
-        currentStreak = 0;
-      }
-      deficitAreaBand += Math.max(0, deadbandFloor - vault);
-    }
-
-    const underTargetRatio = n > 0 ? (underTargetCount / n) : 0;
-    const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
-    const dPost = 1 - postBreakEvenRatio;
-    const meanFee = feeCount > 0 ? (feeSum / feeCount) : 0;
-    const variance = feeCount > 0 ? Math.max(0, (feeSumSq / feeCount) - meanFee * meanFee) : 0;
-    const feeStd = Math.sqrt(variance);
-    const stepP95 = percentile(feeSteps, 95);
-    const stepP99 = percentile(feeSteps, 99);
-    const maxStep = feeSteps.length ? Math.max.apply(null, feeSteps) : 0;
-    const clampMaxRatio = n > 0 ? (clampMaxCount / n) : 0;
-    const breakEvenFeeMean = breakEvenFeeCount > 0 ? (breakEvenFeeSum / breakEvenFeeCount) : 0;
-
-    const dDraw = maxDrawdownEth / targetDenom;
-    const dUnder = underTargetRatio;
-    const dArea = deficitAreaBand / (targetDenom * n);
-    const dStreak = n > 0 ? (worstStreak / n) : 0;
-    const healthBadness = normalizedWeightedSum(
-      [dDraw, dUnder, dArea, dStreak, dPost],
-      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wStreak, scoreCfg.wPostBE]
-    );
-
-    const uStd = feeStd / feeDenom;
-    const uP95 = stepP95 / feeDenom;
-    const uP99 = stepP99 / feeDenom;
-    const uMax = maxStep / feeDenom;
-    const uClamp = clampMaxRatio;
-    const uLevel = breakEvenFeeMean > 0
-      ? Math.max(0, meanFee - breakEvenFeeMean) / breakEvenFeeMean
-      : 0;
-    const uxBadness = normalizedWeightedSum(
-      [uStd, uP95, uP99, uMax, uClamp, uLevel],
-      [scoreCfg.wStd, scoreCfg.wP95, scoreCfg.wP99, scoreCfg.wMaxStep, scoreCfg.wClamp, scoreCfg.wLevel]
-    );
-
-    const totalBadness = normalizedWeightedSum(
-      [healthBadness, uxBadness],
-      [scoreCfg.wHealth, scoreCfg.wUx]
-    );
+    const metrics = computeScoredMetrics({
+      chargedFeeSeries: simulation.chargedFeeGwei,
+      vaultSeries: simulation.vaultEth,
+      requiredFeeSeries: simulation.requiredFeeGwei,
+      clampStateSeries: simulation.clampState,
+      postBreakEvenSeries: simulation.postBreakEvenFlag,
+      targetVaultEth: simCfg.targetVaultEth,
+      maxFeeGwei: simCfg.maxFeeGwei,
+      deadbandPct: scoreCfg.deadbandPct,
+      scoreCfg,
+      i0: 0,
+      i1: n - 1,
+      skipNullSeries: true,
+      fallbackTargetDenomToOne: true,
+    });
 
     return {
       mode: candidate.mode,
@@ -2588,19 +2565,19 @@
       ki: candidate.ki,
       kd: candidate.kd,
       iMax: iMaxSweep,
-      nBlocks: n,
-      healthBadness,
-      uxBadness,
-      totalBadness,
-      maxDrawdownEth,
-      underTargetRatio,
-      postBreakEvenRatio,
-      feeStd,
-      stepP95,
-      stepP99,
-      maxStep,
-      clampMaxRatio,
-      uLevel
+      nBlocks: metrics.n,
+      healthBadness: metrics.healthBadness,
+      uxBadness: metrics.uxBadness,
+      totalBadness: metrics.totalBadness,
+      maxDrawdownEth: metrics.maxDrawdownEth,
+      underTargetRatio: metrics.underTargetRatio,
+      postBreakEvenRatio: metrics.postBreakEvenRatio,
+      feeStd: metrics.feeStd,
+      stepP95: metrics.stepP95,
+      stepP99: metrics.stepP99,
+      maxStep: metrics.maxStep,
+      clampMaxRatio: metrics.clampMaxRatio,
+      uLevel: metrics.uLevel
     };
   }
 
@@ -3658,27 +3635,21 @@
     }
   });
 
-  l2GasPerL2BlockInput.addEventListener('input', function () {
-    syncTpsFromL2Gas();
-  });
-  l2GasPerL2BlockInput.addEventListener('change', function () {
-    syncTpsFromL2Gas();
-  });
+  function bindInputAndChange(inputEl, handler) {
+    inputEl.addEventListener('input', handler);
+    inputEl.addEventListener('change', handler);
+  }
 
-  l2BlockTimeSecInput.addEventListener('input', function () {
+  function syncThroughputFromBlockTimeInput() {
     if (l2TpsInput && l2TpsInput.value !== 'custom') {
       syncL2GasFromTps();
     } else {
       syncTpsFromL2Gas();
     }
-  });
-  l2BlockTimeSecInput.addEventListener('change', function () {
-    if (l2TpsInput && l2TpsInput.value !== 'custom') {
-      syncL2GasFromTps();
-    } else {
-      syncTpsFromL2Gas();
-    }
-  });
+  }
+
+  bindInputAndChange(l2GasPerL2BlockInput, syncTpsFromL2Gas);
+  bindInputAndChange(l2BlockTimeSecInput, syncThroughputFromBlockTimeInput);
 
   minInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
