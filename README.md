@@ -10,9 +10,7 @@ This repo contains:
 
 - `script/`
   - `fetch_eth_l1_fee_history.py`: fetches L1 base/blob fee history to CSV + summary JSON.
-  - `fetch_eth_gas_used_history.py`: fetches L1 gas used history and writes CSV + PNG.
   - `generate_interactive_fee_uplot.py`: generates interactive dataset payload JS files (data only).
-  - `generate_interactive_gas_used_uplot.py`: generates interactive gas-used plots.
 - `data/`
   - Raw fetched CSV/JSON datasets.
   - `plots/`: generated interactive pages and static assets.
@@ -27,7 +25,7 @@ This repo contains:
 Install Python dependencies:
 
 ```bash
-python3 -m pip install requests matplotlib
+python3 -m pip install requests
 ```
 
 ## Quick Start (Open Existing Interactive Simulator)
@@ -76,28 +74,17 @@ Refresh multi-dataset payload files consumed by the static UI:
 
 ```bash
 python3 script/generate_interactive_fee_uplot.py \
-  --dataset "current365|Current 365d|data/eth_l1_fee_365d_20260206T195430Z.csv" \
-  --dataset "prior365|Prior 365d|data/eth_l1_fee_365d_20260207T042312Z.csv" \
-  --dataset "year2021|Year 2021|data/eth_l1_fee_blocks_11565019_13916165_20260207T065924Z.csv" \
+  --dataset "current365|data/eth_l1_fee_365d_20260206T195430Z.csv" \
+  --dataset "prior365|data/eth_l1_fee_365d_20260207T042312Z.csv" \
+  --dataset "year2021|data/eth_l1_fee_blocks_11565019_13916165_20260207T065924Z.csv" \
   --max-points 160000 \
-  --no-rpc-anchor \
   --out-js data/plots/fee_history_interactive_app.js
 ```
 
 Notes:
-- `--dataset` format: `<id>|<label>|<csv_path>` (repeatable).
-- `--no-rpc-anchor` avoids live RPC timestamp lookups and uses summary/cache only.
+- `--dataset` format: `<id>|<csv_path>` (repeatable).
+- Time anchors come from each dataset summary JSON only.
 - The script does not overwrite `data/plots/fee_history_interactive.html` or `data/plots/fee_history_interactive_app.js`.
-
-## Gas-Used History Utility
-
-```bash
-python3 script/fetch_eth_gas_used_history.py \
-  --hours 6 \
-  --rpc https://ethereum-rpc.publicnode.com \
-  --out-dir data \
-  --plot-dir data/plots
-```
 
 ## Tests
 

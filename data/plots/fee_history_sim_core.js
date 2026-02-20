@@ -27,7 +27,6 @@
   function getModeFlags(mode) {
     const usesFeedforward = (
       mode === 'ff' ||
-      mode === 'alpha-only' ||
       mode === 'pi+ff' ||
       mode === 'pdi+ff'
     );
@@ -448,7 +447,6 @@
       BLOB_GAS_PER_BLOB,
     },
     clampNum,
-    getModeFlags,
     estimateDynamicBlobs,
     buildL2GasSeries,
     simulateSeries,

@@ -774,10 +774,6 @@
       .replace(/'/g, '&#39;');
   }
 
-  function getModeFlags(mode) {
-    return simCore.getModeFlags(mode);
-  }
-
   function currentBlobMode() {
     if (!blobModeInput) return DEFAULT_BLOB_MODE;
     return blobModeInput.value === 'dynamic' ? 'dynamic' : 'fixed';
@@ -1212,7 +1208,7 @@
   }
 
   function applyControllerModePreset(mode) {
-    if (mode === 'ff' || mode === 'alpha-only') {
+    if (mode === 'ff') {
       kpInput.value = '0';
       kiInput.value = '0';
       kdInput.value = '0';
@@ -2137,7 +2133,7 @@
       postEveryBlocks: parsePositiveInt(postEveryBlocksInput, 10),
       l2GasPerL2Block: parsePositive(l2GasPerL2BlockInput, 0),
       l2Tps: currentTpsSnapshot(),
-      l2BlockTimeSec: parsePositive(l2BlockTimeSecInput, 12),
+      l2BlockTimeSec: parsePositive(l2BlockTimeSecInput, 2),
       l2GasScenario: l2GasScenarioInput.value || 'constant',
       l2DemandRegime: l2DemandRegimeInput.value || 'base',
       l1GasUsed: parsePositive(l1GasUsedInput, 0),
@@ -3370,7 +3366,6 @@
     if (rangeChanged) resetSweepState('range changed');
     markScoreStale('range changed');
     refreshRangePresetSelection();
-    renderSavedRunsList();
     refreshComparisonPlots();
   }
 
@@ -3511,92 +3506,76 @@
     scheduleRecalc('Recomputing derived charts...');
   });
 
-  if (saveRunBtn) {
-    saveRunBtn.addEventListener('click', function () {
-      saveCurrentRun();
-    });
-  }
+  saveRunBtn.addEventListener('click', function () {
+    saveCurrentRun();
+  });
 
-  if (toggleCurrentRunBtn) {
-    toggleCurrentRunBtn.addEventListener('click', function () {
-      toggleCurrentRunView();
-    });
-  }
+  toggleCurrentRunBtn.addEventListener('click', function () {
+    toggleCurrentRunView();
+  });
 
-  if (clearSavedRunsBtn) {
-    clearSavedRunsBtn.addEventListener('click', function () {
-      clearSavedRuns();
-    });
-  }
+  clearSavedRunsBtn.addEventListener('click', function () {
+    clearSavedRuns();
+  });
 
-  if (recomputeSavedRunsBtn) {
-    recomputeSavedRunsBtn.addEventListener('click', function () {
-      recomputeSavedRunsNow();
-    });
-  }
+  recomputeSavedRunsBtn.addEventListener('click', function () {
+    recomputeSavedRunsNow();
+  });
 
-  if (updateAssumptionsRecomputeSavedRunsBtn) {
-    updateAssumptionsRecomputeSavedRunsBtn.addEventListener('click', function () {
-      updateAssumptionsAndRecomputeSavedRunsNow();
-    });
-  }
+  updateAssumptionsRecomputeSavedRunsBtn.addEventListener('click', function () {
+    updateAssumptionsAndRecomputeSavedRunsNow();
+  });
 
-  if (savedRunsList) {
-    savedRunsList.addEventListener('click', function (e) {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      const action = target.getAttribute('data-action');
-      if (action !== 'delete') return;
-      const runId = Number(target.getAttribute('data-run-id'));
-      if (!Number.isFinite(runId)) return;
-      deleteSavedRun(runId);
-    });
+  savedRunsList.addEventListener('click', function (e) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const action = target.getAttribute('data-action');
+    if (action !== 'delete') return;
+    const runId = Number(target.getAttribute('data-run-id'));
+    if (!Number.isFinite(runId)) return;
+    deleteSavedRun(runId);
+  });
 
-    savedRunsList.addEventListener('change', function (e) {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      const action = target.getAttribute('data-action');
-      const runId = Number(target.getAttribute('data-run-id'));
-      if (!Number.isFinite(runId)) return;
-      let changed = false;
-      if (action === 'toggle') {
-        changed = savedRunManager.updateRunById(runId, function (run) {
-          run.visible = Boolean(target.checked);
-        });
-      } else if (action === 'lineStyle') {
-        changed = savedRunManager.updateRunById(runId, function (run) {
-          run.solidLine = Boolean(target.checked);
-        });
-      } else if (action === 'name') {
-        changed = savedRunManager.updateRunById(runId, function (run) {
-          run.name = normalizeRunName(target.value);
-        });
-      } else {
-        return;
+  savedRunsList.addEventListener('change', function (e) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const action = target.getAttribute('data-action');
+    const runId = Number(target.getAttribute('data-run-id'));
+    if (!Number.isFinite(runId)) return;
+    let changed = false;
+    if (action === 'toggle') {
+      changed = savedRunManager.updateRunById(runId, function (run) {
+        run.visible = Boolean(target.checked);
+      });
+    } else if (action === 'lineStyle') {
+      changed = savedRunManager.updateRunById(runId, function (run) {
+        run.solidLine = Boolean(target.checked);
+      });
+    } else if (action === 'name') {
+      changed = savedRunManager.updateRunById(runId, function (run) {
+        run.name = normalizeRunName(target.value);
+      });
+    } else {
+      return;
+    }
+    if (!changed) return;
+    renderSavedRunsList();
+    refreshComparisonPlots();
+  });
+
+  scoreBtn.addEventListener('click', function () {
+    if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
+    setUiBusy(true);
+    window.setTimeout(function () {
+      try {
+        scoreCurrentRangeNow();
+      } finally {
+        setUiBusy(false);
       }
-      if (!changed) return;
-      renderSavedRunsList();
-      refreshComparisonPlots();
-    });
-
-  }
-
-  if (scoreBtn) {
-    scoreBtn.addEventListener('click', function () {
-      if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
-      setUiBusy(true);
-      window.setTimeout(function () {
-        try {
-          scoreCurrentRangeNow();
-        } finally {
-          setUiBusy(false);
-        }
-      }, 0);
-    });
-  }
+    }, 0);
+  });
 
   function setScoreHelpOpen(isOpen) {
-    if (!scoreHelpModal) return;
     if (isOpen) {
       scoreHelpModal.classList.add('open');
       scoreHelpModal.setAttribute('aria-hidden', 'false');
@@ -3607,7 +3586,6 @@
   }
 
   function setControllerHelpOpen(isOpen) {
-    if (!controllerHelpModal) return;
     if (isOpen) {
       controllerHelpModal.classList.add('open');
       controllerHelpModal.setAttribute('aria-hidden', 'false');
@@ -3617,74 +3595,52 @@
     }
   }
 
-  if (controllerHelpBtn && controllerHelpModal) {
-    controllerHelpBtn.addEventListener('click', function () {
-      setControllerHelpOpen(true);
-    });
-    if (controllerHelpClose) {
-      controllerHelpClose.addEventListener('click', function () {
-        setControllerHelpOpen(false);
-      });
+  controllerHelpBtn.addEventListener('click', function () {
+    setControllerHelpOpen(true);
+  });
+  controllerHelpClose.addEventListener('click', function () {
+    setControllerHelpOpen(false);
+  });
+  controllerHelpModal.addEventListener('click', function (e) {
+    if (e.target === controllerHelpModal) {
+      setControllerHelpOpen(false);
     }
-    controllerHelpModal.addEventListener('click', function (e) {
-      if (e.target === controllerHelpModal) {
-        setControllerHelpOpen(false);
-      }
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && controllerHelpModal.classList.contains('open')) {
-        setControllerHelpOpen(false);
-      }
-    });
-  }
-
-  if (scoreHelpBtn && scoreHelpModal) {
-    scoreHelpBtn.addEventListener('click', function () {
-      setScoreHelpOpen(true);
-    });
-    if (scoreHelpClose) {
-      scoreHelpClose.addEventListener('click', function () {
-        setScoreHelpOpen(false);
-      });
+  });
+  scoreHelpBtn.addEventListener('click', function () {
+    setScoreHelpOpen(true);
+  });
+  scoreHelpClose.addEventListener('click', function () {
+    setScoreHelpOpen(false);
+  });
+  scoreHelpModal.addEventListener('click', function (e) {
+    if (e.target === scoreHelpModal) {
+      setScoreHelpOpen(false);
     }
-    scoreHelpModal.addEventListener('click', function (e) {
-      if (e.target === scoreHelpModal) {
-        setScoreHelpOpen(false);
-      }
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && scoreHelpModal.classList.contains('open')) {
-        setScoreHelpOpen(false);
-      }
-    });
-  }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (controllerHelpModal.classList.contains('open')) setControllerHelpOpen(false);
+    if (scoreHelpModal.classList.contains('open')) setScoreHelpOpen(false);
+  });
 
-  if (sweepBtn) {
-    sweepBtn.addEventListener('click', function () {
-      runParameterSweep();
-    });
-  }
+  sweepBtn.addEventListener('click', function () {
+    runParameterSweep();
+  });
 
-  if (sweepCancelBtn) {
-    sweepCancelBtn.addEventListener('click', function () {
-      if (!sweepRunning) return;
-      sweepCancelRequested = true;
-      setSweepStatus('Cancel requested. Finishing current candidate...');
-    });
-  }
+  sweepCancelBtn.addEventListener('click', function () {
+    if (!sweepRunning) return;
+    sweepCancelRequested = true;
+    setSweepStatus('Cancel requested. Finishing current candidate...');
+  });
 
-  if (sweepApplyBestBtn) {
-    sweepApplyBestBtn.addEventListener('click', function () {
-      applySweepBestCandidate();
-    });
-  }
+  sweepApplyBestBtn.addEventListener('click', function () {
+    applySweepBestCandidate();
+  });
 
-  if (feeMechanismInput) {
-    feeMechanismInput.addEventListener('change', function () {
-      syncFeeMechanismUi();
-      markParamsStale('Fee mechanism changed. Click Recompute derived charts.');
-    });
-  }
+  feeMechanismInput.addEventListener('change', function () {
+    syncFeeMechanismUi();
+    markParamsStale('Fee mechanism changed. Click Recompute derived charts.');
+  });
 
   controllerModeInput.addEventListener('change', function () {
     applyControllerModePreset(controllerModeInput.value || 'ff');
@@ -3696,20 +3652,16 @@
     markParamsStale('Auto alpha changed. Click Recompute derived charts.');
   });
 
-  if (blobModeInput) {
-    blobModeInput.addEventListener('change', function () {
-      syncBlobModeUi();
-      markParamsStale('Blob model changed. Click Recompute derived charts.');
-    });
-  }
+  blobModeInput.addEventListener('change', function () {
+    syncBlobModeUi();
+    markParamsStale('Blob model changed. Click Recompute derived charts.');
+  });
 
-  if (l2TpsInput) {
-    l2TpsInput.addEventListener('change', function () {
-      if (syncL2GasFromTps()) {
-        markParamsStale('Parameter changes pending. Click Recompute derived charts.');
-      }
-    });
-  }
+  l2TpsInput.addEventListener('change', function () {
+    if (syncL2GasFromTps()) {
+      markParamsStale('Parameter changes pending. Click Recompute derived charts.');
+    }
+  });
 
   l2GasPerL2BlockInput.addEventListener('input', function () {
     syncTpsFromL2Gas();
@@ -3749,9 +3701,9 @@
     }
   });
 
-    [
-      postEveryBlocksInput,
-      l2GasPerL2BlockInput,
+  [
+    postEveryBlocksInput,
+    l2GasPerL2BlockInput,
     l2BlockTimeSecInput,
     l2GasScenarioInput,
     l2DemandRegimeInput,
@@ -3765,12 +3717,12 @@
     blobUtilizationInput,
     minBlobsPerProposalInput,
     priorityFeeGweiInput,
-      alphaGasInput,
-      alphaBlobInput,
-      eip1559DenominatorInput,
-      arbInitialPriceGweiInput,
-      arbInertiaInput,
-      arbEquilUnitsInput,
+    alphaGasInput,
+    alphaBlobInput,
+    eip1559DenominatorInput,
+    arbInitialPriceGweiInput,
+    arbInertiaInput,
+    arbEquilUnitsInput,
     dffBlocksInput,
     dfbBlocksInput,
     dSmoothBetaInput,
@@ -3784,7 +3736,7 @@
     maxFeeGweiInput,
     initialVaultEthInput,
     targetVaultEthInput
-  ].filter(Boolean).forEach(function (el) {
+  ].forEach(function (el) {
     el.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') markParamsStale('Parameter changes pending. Click Recompute derived charts.');
     });
@@ -3825,28 +3777,24 @@
     resizeTimer = setTimeout(resizePlots, 120);
   });
 
-  if (datasetRangeInput) {
-    datasetRangeInput.addEventListener('change', async function () {
-      const nextId = datasetRangeInput.value ? String(datasetRangeInput.value) : '';
-      if (!nextId || nextId === activeDatasetId) return;
-      try {
-        setStatus(`Switching dataset to "${nextId}"...`);
-        await activateDataset(nextId, true);
-      } catch (err) {
-        setStatus(`Dataset switch failed: ${err && err.message ? err.message : err}`);
-      }
-    });
-  }
+  datasetRangeInput.addEventListener('change', async function () {
+    const nextId = datasetRangeInput.value ? String(datasetRangeInput.value) : '';
+    if (!nextId || nextId === activeDatasetId) return;
+    try {
+      setStatus(`Switching dataset to "${nextId}"...`);
+      await activateDataset(nextId, true);
+    } catch (err) {
+      setStatus(`Dataset switch failed: ${err && err.message ? err.message : err}`);
+    }
+  });
 
-  if (rangePresetInput) {
-    rangePresetInput.addEventListener('change', function () {
-      const presetId = rangePresetInput.value ? String(rangePresetInput.value) : '';
-      if (!presetId) return;
-      runAsyncUiTask('Applying representative range...', async function () {
-        await applyRangePresetById(presetId);
-      });
+  rangePresetInput.addEventListener('change', function () {
+    const presetId = rangePresetInput.value ? String(rangePresetInput.value) : '';
+    if (!presetId) return;
+    runAsyncUiTask('Applying representative range...', async function () {
+      await applyRangePresetById(presetId);
     });
-  }
+  });
 
   async function initDatasets() {
     setDatasetRangeOptions();

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-## E2E: Build The Interactive HTML
+## E2E: Refresh Interactive Payloads + Regressions
 
 Run from repo root:
 
@@ -12,11 +12,10 @@ cd /home/lin/workspace/taiko-fee-simulator
 
 ```bash
 python3 script/generate_interactive_fee_uplot.py \
-  --dataset "current365|Current 365d|data/eth_l1_fee_365d_20260206T195430Z.csv" \
-  --dataset "prior365|Prior 365d|data/eth_l1_fee_365d_20260207T042312Z.csv" \
-  --dataset "year2021|Year 2021|data/eth_l1_fee_blocks_11565019_13916165_20260207T065924Z.csv" \
+  --dataset "current365|data/eth_l1_fee_365d_20260206T195430Z.csv" \
+  --dataset "prior365|data/eth_l1_fee_365d_20260207T042312Z.csv" \
+  --dataset "year2021|data/eth_l1_fee_blocks_11565019_13916165_20260207T065924Z.csv" \
   --max-points 160000 \
-  --no-rpc-anchor \
   --out-js data/plots/fee_history_interactive_app.js
 ```
 
@@ -47,4 +46,10 @@ Run core tests:
 ```bash
 cd /home/lin/workspace/taiko-fee-simulator
 node --test data/plots/tests/*.test.js
+```
+
+### 4) Open Playwright visual report
+
+```bash
+npx playwright show-report "/home/lin/workspace/taiko-fee-simulator/playwright-report"
 ```
