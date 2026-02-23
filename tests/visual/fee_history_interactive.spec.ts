@@ -69,14 +69,17 @@ test.describe('fee_history_interactive visual regression', () => {
     await openSimulator(page, 'current365', 'Current 365d');
 
     await page.selectOption('#feeMechanism', 'taiko');
-    await page.selectOption('#controllerMode', 'p');
+    await page.fill('#ki', '0');
+    await page.fill('#kd', '0');
+    await page.fill('#alphaGas', '0');
+    await page.fill('#alphaBlob', '0');
     await recomputeDerivedCharts(page);
     await page.click('#saveRunBtn');
 
     await expect(page.locator('#savedRunsStatus')).toHaveText('1 / 6 saved');
     await expect(page.locator('#savedRunsList .saved-run')).toHaveCount(1);
     await expect(page.locator('#savedRunsList')).toContainText('"feeMechanism": "taiko"');
-    await expect(page.locator('#savedRunsList')).toContainText('"controllerMode": "p"');
+    await expect(page.locator('#savedRunsList')).toContainText('"ki": 0');
 
     await page.selectOption('#feeMechanism', 'eip1559');
     await recomputeDerivedCharts(page);

@@ -24,34 +24,6 @@
     return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   }
 
-  function getModeFlags(mode) {
-    const usesFeedforward = (
-      mode === 'ff' ||
-      mode === 'pi+ff' ||
-      mode === 'pdi+ff'
-    );
-    const usesP = (
-      mode === 'p' ||
-      mode === 'pi' ||
-      mode === 'pd' ||
-      mode === 'pdi' ||
-      mode === 'pi+ff' ||
-      mode === 'pdi+ff'
-    );
-    const usesI = (
-      mode === 'pi' ||
-      mode === 'pdi' ||
-      mode === 'pi+ff' ||
-      mode === 'pdi+ff'
-    );
-    const usesD = (
-      mode === 'pd' ||
-      mode === 'pdi' ||
-      mode === 'pdi+ff'
-    );
-    return { usesFeedforward, usesP, usesI, usesD };
-  }
-
   function estimateDynamicBlobs(l2GasPerProposal, blobModel) {
     if (!(l2GasPerProposal > 0)) {
       return Math.max(0, toNumber(blobModel.minBlobsPerProposal, 0));
@@ -106,7 +78,6 @@
   function createMechanismState(mechanism, cfg) {
     if (mechanism === 'taiko') {
       return {
-        modeFlags: getModeFlags(cfg.controllerMode || 'ff'),
         integralState: 0,
         derivFiltered: 0,
         epsilonPrev: 0,
@@ -127,24 +98,19 @@
 
   function computeFeeForStep(mechanism, state, step, cfg) {
     if (mechanism === 'taiko') {
-      const modeFlags = state.modeFlags;
       const gasComponentWei = cfg.alphaGas * (step.baseFeeFfWei + cfg.priorityFeeWei);
       const blobComponentWei = cfg.alphaBlob * step.blobBaseFeeFfWei;
 
-      if (modeFlags.usesI) {
-        state.integralState = clampNum(state.integralState + step.epsilon, cfg.iMin, cfg.iMax);
-      } else {
-        state.integralState = 0;
-      }
+      state.integralState = clampNum(state.integralState + step.epsilon, cfg.iMin, cfg.iMax);
 
       const deRaw = step.localIndex > 0 ? (step.epsilon - state.epsilonPrev) : 0;
       state.derivFiltered = cfg.derivBeta * state.derivFiltered + (1 - cfg.derivBeta) * deRaw;
-      const pTermWeiRaw = modeFlags.usesP ? (cfg.kp * step.epsilon * cfg.feeRangeWei) : 0;
-      const pTermWei = modeFlags.usesP ? Math.max(cfg.pTermMinWei, pTermWeiRaw) : 0;
-      const iTermWei = modeFlags.usesI ? (cfg.ki * state.integralState * cfg.feeRangeWei) : 0;
-      const dTermWei = modeFlags.usesD ? (cfg.kd * state.derivFiltered * cfg.feeRangeWei) : 0;
+      const pTermWeiRaw = cfg.kp * step.epsilon * cfg.feeRangeWei;
+      const pTermWei = Math.max(cfg.pTermMinWei, pTermWeiRaw);
+      const iTermWei = cfg.ki * state.integralState * cfg.feeRangeWei;
+      const dTermWei = cfg.kd * state.derivFiltered * cfg.feeRangeWei;
       const feedbackWei = pTermWei + iTermWei + dTermWei;
-      const feedforwardWei = modeFlags.usesFeedforward ? (gasComponentWei + blobComponentWei) : 0;
+      const feedforwardWei = gasComponentWei + blobComponentWei;
       const chargedFeeWeiPerL2Gas = clampNum(feedforwardWei + feedbackWei, cfg.minFeeWei, cfg.maxFeeWei);
 
       return {
@@ -273,7 +239,6 @@
     const arbEquilUnits = Math.max(1, toNumber(cfg.arbEquilUnits, 1));
 
     const simCfg = {
-      controllerMode: cfg.controllerMode || 'ff',
       alphaGas,
       alphaBlob,
       kp,

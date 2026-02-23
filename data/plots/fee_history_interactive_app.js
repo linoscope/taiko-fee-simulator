@@ -18,7 +18,6 @@
   const DEFAULT_ARB_EQUIL_UNITS = 96000000;
   const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({ low: 0.7, base: 1.0, high: 1.4 });
-  const SWEEP_MODES = Object.freeze(['pdi', 'pdi+ff']);
   const SWEEP_ALPHA_VARIANTS = Object.freeze(['current', 'zero']);
   const SWEEP_KP_VALUES = Object.freeze([0.0, 0.02, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6]);
   const SWEEP_KI_VALUES = Object.freeze([0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]);
@@ -121,7 +120,6 @@
   const autoAlphaInput = document.getElementById('autoAlpha');
   const alphaGasInput = document.getElementById('alphaGas');
   const alphaBlobInput = document.getElementById('alphaBlob');
-  const controllerModeInput = document.getElementById('controllerMode');
   const arbInitialPriceGweiInput = document.getElementById('arbInitialPriceGwei');
   const arbInertiaInput = document.getElementById('arbInertia');
   const arbEquilUnitsInput = document.getElementById('arbEquilUnits');
@@ -203,7 +201,6 @@
   const sweepApplyBestBtn = document.getElementById('sweepApplyBestBtn');
   const sweepStatus = document.getElementById('sweepStatus');
   const sweepSpinner = document.getElementById('sweepSpinner');
-  const sweepBestMode = document.getElementById('sweepBestMode');
   const sweepBestAlphaVariant = document.getElementById('sweepBestAlphaVariant');
   const sweepBestKp = document.getElementById('sweepBestKp');
   const sweepBestKi = document.getElementById('sweepBestKi');
@@ -935,7 +932,6 @@
       blobModel,
       priorityFeeGwei: Math.max(0, Number(raw.priorityFeeGwei) || 0),
       feeMechanism: mechanism,
-      controllerMode: raw.controllerMode || 'ff',
       autoAlphaEnabled: raw.autoAlphaEnabled === true,
       alphaGas: Math.max(0, Number(raw.alphaGas) || 0),
       alphaBlob: Math.max(0, Number(raw.alphaBlob) || 0),
@@ -988,7 +984,6 @@
     const maxFeeWei = Math.max(minFeeWei, runParams.maxFeeGwei * 1e9);
     return {
       mechanism: runParams.feeMechanism,
-      controllerMode: runParams.controllerMode,
       postEveryBlocks: runParams.postEveryBlocks,
       l1GasUsed: runParams.l1GasUsed,
       blobMode: runParams.blobMode,
@@ -1286,9 +1281,7 @@
       uxBadness: score.uxBadness,
       healthBadness: score.healthBadness,
       totalBadness: score.totalBadness,
-      mode: mechanism === 'taiko'
-        ? (controllerModeInput.value || 'ff')
-        : (mechanism === 'eip1559' ? 'eip1559' : 'arbitrum'),
+      mode: mechanism,
       alphaVariant: mechanism === 'taiko' ? (autoAlphaInput.checked ? 'auto' : 'current') : 'n/a',
       alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
       alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
@@ -1350,57 +1343,6 @@
     } else {
       alphaGasInput.disabled = true;
       alphaBlobInput.disabled = true;
-    }
-  }
-
-  function disableFeedforward() {
-    autoAlphaInput.checked = false;
-    alphaGasInput.value = '0';
-    alphaBlobInput.value = '0';
-    syncAutoAlphaInputs();
-  }
-
-  function applyControllerModePreset(mode) {
-    if (mode === 'ff') {
-      kpInput.value = '0';
-      kiInput.value = '0';
-      kdInput.value = '0';
-      ensureFeedforwardDefaults();
-      return;
-    }
-
-    if (mode === 'p') {
-      disableFeedforward();
-      kiInput.value = '0';
-      kdInput.value = '0';
-      return;
-    }
-
-    if (mode === 'pi') {
-      disableFeedforward();
-      kdInput.value = '0';
-      return;
-    }
-
-    if (mode === 'pd') {
-      disableFeedforward();
-      kiInput.value = '0';
-      return;
-    }
-
-    if (mode === 'pdi') {
-      disableFeedforward();
-      return;
-    }
-
-    if (mode === 'pi+ff') {
-      kdInput.value = '0';
-      ensureFeedforwardDefaults();
-      return;
-    }
-
-    if (mode === 'pdi+ff') {
-      ensureFeedforwardDefaults();
     }
   }
 
@@ -2311,7 +2253,6 @@
     sweepScoredHistory = [];
     sweepPoints = [];
     if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
-    if (sweepBestMode) sweepBestMode.textContent = '-';
     if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
     if (sweepBestKp) sweepBestKp.textContent = '-';
     if (sweepBestKi) sweepBestKi.textContent = '-';
@@ -2362,21 +2303,18 @@
 
   function buildSweepCandidates() {
     const out = [];
-    for (const mode of SWEEP_MODES) {
-      for (const kp of SWEEP_KP_VALUES) {
-        for (const ki of SWEEP_KI_VALUES) {
-          for (const kd of SWEEP_KD_VALUES) {
-            for (const iMax of SWEEP_I_MAX_VALUES) {
-              for (const alphaVariant of SWEEP_ALPHA_VARIANTS) {
-                out.push({
-                  mode,
-                  alphaVariant,
-                  kp,
-                  ki,
-                  kd,
-                  iMax
-                });
-              }
+    for (const kp of SWEEP_KP_VALUES) {
+      for (const ki of SWEEP_KI_VALUES) {
+        for (const kd of SWEEP_KD_VALUES) {
+          for (const iMax of SWEEP_I_MAX_VALUES) {
+            for (const alphaVariant of SWEEP_ALPHA_VARIANTS) {
+              out.push({
+                alphaVariant,
+                kp,
+                ki,
+                kd,
+                iMax
+              });
             }
           }
         }
@@ -2405,7 +2343,6 @@
       blobModel: parseBlobModelInputs(),
       priorityFeeGwei: parsePositive(priorityFeeGweiInput, 0),
       feeMechanism: currentFeeMechanism(),
-      controllerMode: controllerModeInput.value || 'ff',
       autoAlphaEnabled: autoAlphaInput.checked,
       alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
       alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
@@ -2467,7 +2404,6 @@
       blobMode,
       fixedNumBlobs,
       blobModel,
-      controllerMode,
       kp,
       ki,
       kd,
@@ -2679,7 +2615,7 @@
           sweepRange.i0,
           sweepRange.i1,
           {
-            mode: controllerMode,
+            mode: 'taiko',
             alphaVariant: 'current',
             alphaGas,
             alphaBlob,
@@ -2711,7 +2647,6 @@
     const iMaxSweep = Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax;
     const simulation = simCore.simulateSeries({
       mechanism: 'taiko',
-      controllerMode: candidate.mode,
       baseFeeGwei: baseFeeGwei.slice(i0, i1 + 1),
       blobFeeGwei: blobFeeGwei.slice(i0, i1 + 1),
       l2GasPerL1BlockSeries: simCfg.l2GasPerL1BlockSeries.slice(i0, i1 + 1),
@@ -2760,7 +2695,7 @@
     });
 
     return {
-      mode: candidate.mode,
+      mode: 'taiko',
       alphaVariant: candidateAlphaVariant,
       alphaGas: candidateAlphaGas,
       alphaBlob: candidateAlphaBlob,
@@ -2792,7 +2727,6 @@
       const r = results[i];
       const isBest = Boolean(
         best &&
-        r.mode === best.mode &&
         r.alphaVariant === best.alphaVariant &&
         r.kp === best.kp &&
         r.ki === best.ki &&
@@ -2948,7 +2882,7 @@
     if (p.isLatestScored) tagParts.push('latest');
     const tagText = tagParts.length ? ` (${tagParts.join(', ')})` : '';
     setSweepHoverText(
-      `Hover point ${rankPart}${tagText}: mode=${p.mode}, alpha=${p.alphaVariant}, ` +
+      `Hover point ${rankPart}${tagText}: mechanism=${(p.mode === 'taiko' ? 'pid+ff' : p.mode)}, alpha=${p.alphaVariant}, ` +
       `Kp=${formatNum(p.kp, 4)}, Ki=${formatNum(p.ki, 4)}, Kd=${formatNum(p.kd, 4)}, Imax=${formatNum(p.iMax, 4)}, ` +
       `health=${formatNum(p.health, 6)}, UX=${formatNum(p.ux, 6)}, total=${formatNum(p.total, 6)}`
     );
@@ -2957,7 +2891,7 @@
   async function runParameterSweep() {
     if (sweepRunning) return;
     if (currentFeeMechanism() !== 'taiko') {
-      setSweepStatus('Sweep currently supports Taiko mechanism only. Switch Fee mechanism to "Taiko (P/I/D + FF)".');
+      setSweepStatus('Sweep currently supports PID+FF mechanism only. Switch Fee mechanism to "PID Controller + FF".');
       return;
     }
     recalcDerivedSeries();
@@ -3050,7 +2984,6 @@
         range.i0,
         range.i1,
         {
-          mode: cand.mode,
           alphaVariant: cand.alphaVariant,
           alphaGas: useZeroAlpha ? 0 : alphaGasFixed,
           alphaBlob: useZeroAlpha ? 0 : alphaBlobFixed,
@@ -3093,7 +3026,6 @@
     sweepCurrentPoint = null;
     sweepBestCandidate = results[0];
     if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = false;
-    if (sweepBestMode) sweepBestMode.textContent = sweepBestCandidate.mode;
     if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = sweepBestCandidate.alphaVariant || 'current';
     if (sweepBestKp) sweepBestKp.textContent = formatNum(sweepBestCandidate.kp, 4);
     if (sweepBestKi) sweepBestKi.textContent = formatNum(sweepBestCandidate.ki, 4);
@@ -3119,8 +3051,6 @@
     if (!sweepBestCandidate) return;
     if (feeMechanismInput) feeMechanismInput.value = 'taiko';
     syncFeeMechanismUi();
-    controllerModeInput.value = sweepBestCandidate.mode;
-    applyControllerModePreset(sweepBestCandidate.mode);
     if (sweepBestCandidate.alphaVariant === 'zero') {
       autoAlphaInput.checked = false;
       alphaGasInput.value = '0';
@@ -3452,7 +3382,7 @@
           }
         },
         {
-          label: 'Candidates (pdi/pdi+ff)',
+          label: 'Candidates (Taiko coeff sweep)',
           stroke: '#64748b',
           width: 0,
           points: { show: true, size: 4, stroke: '#64748b', fill: '#94a3b8' }
@@ -3646,7 +3576,7 @@
   );
 
   setSweepUiState(false);
-  setSweepStatus('Sweep idle. Taiko-only sweep: Kp/Ki/Imax across pdi + pdi+ff with Kd fixed at 0 and alpha variants (current, zero).');
+  setSweepStatus('Sweep idle. PID+FF-only coefficient sweep: Kp/Ki/Imax with Kd fixed at 0 and alpha variants (current, zero).');
   setSweepHoverText('Hover point: -');
   minInput.value = '';
   maxInput.value = '';
@@ -3827,11 +3757,6 @@
   feeMechanismInput.addEventListener('change', function () {
     syncFeeMechanismUi();
     markParamsStale('Fee mechanism changed. Click Recompute derived charts.');
-  });
-
-  controllerModeInput.addEventListener('change', function () {
-    applyControllerModePreset(controllerModeInput.value || 'ff');
-    markParamsStale('Controller mode changed. Click Recompute derived charts.');
   });
 
   autoAlphaInput.addEventListener('change', function () {

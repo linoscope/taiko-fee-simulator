@@ -39,7 +39,6 @@ function baseConfigForMechanism(mechanism) {
   const n = 16;
   return {
     mechanism,
-    controllerMode: 'pdi+ff',
     baseFeeGwei: Array.from({ length: n }, (_, i) => 1 + (i % 3) * 0.25),
     blobFeeGwei: Array.from({ length: n }, (_, i) => 2 + (i % 4) * 0.1),
     l2GasPerL1BlockSeries: Array.from({ length: n }, () => 140000),

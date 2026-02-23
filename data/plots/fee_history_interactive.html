@@ -496,24 +496,13 @@
           <div class="controls">
             <label>Fee mechanism
               <select id="feeMechanism">
-                <option value="taiko" selected>Taiko (P/I/D + FF)</option>
+                <option value="taiko" selected>PID Controller + FF</option>
                 <option value="eip1559">EIP-1559 mode</option>
                 <option value="arbitrum">Arbitrum (surplus pricer)</option>
               </select>
             </label>
             <div id="taikoParamsGroup" class="mechanism-group">
-              <div class="mechanism-group-title">Taiko controller params</div>
-              <label>Controller mode
-                <select id="controllerMode">
-                  <option value="ff">ff</option>
-                  <option value="p" selected>p</option>
-                  <option value="pi">pi</option>
-                  <option value="pd">pd</option>
-                  <option value="pdi">pdi</option>
-                  <option value="pi+ff">pi+ff</option>
-                  <option value="pdi+ff">pdi+ff</option>
-                </select>
-              </label>
+              <div class="mechanism-group-title">PID controller params</div>
               <label><input id="autoAlpha" type="checkbox" /> Auto alpha</label>
               <label>Alpha gas <input id="alphaGas" type="number" min="0" step="0.000001" value="0" /></label>
               <label>Alpha blob <input id="alphaBlob" type="number" min="0" step="0.000001" value="0" /></label>
@@ -625,7 +614,7 @@
             <span>UX fee step max: <strong id="uxFeeStepMax">-</strong></span>
           </div>
           <div class="assumptions-title">Parameter Sweep</div>
-          <div class="formula">Sweep modes are fixed to pdi + pdi+ff; swept params are alpha variant (current/zero), Kp, Ki, I max (Kd fixed at 0).</div>
+          <div class="formula">PID+FF-only coefficient sweep over alpha variant (current/zero), Kp, Ki, and I max (Kd fixed at 0).</div>
           <div class="controls">
             <button class="primary" id="sweepBtn">Run parameter sweep</button>
             <button id="sweepCancelBtn" disabled>Cancel sweep</button>
@@ -638,7 +627,6 @@
           <div class="metrics">
             <span>Sweep size: <strong id="sweepCandidateCount">-</strong></span>
             <span>Range size: <strong id="sweepRangeCount">-</strong></span>
-            <span>Best mode: <strong id="sweepBestMode">-</strong></span>
             <span>Best alpha: <strong id="sweepBestAlphaVariant">-</strong></span>
             <span>Best Kp: <strong id="sweepBestKp">-</strong></span>
             <span>Best Ki: <strong id="sweepBestKi">-</strong></span>
