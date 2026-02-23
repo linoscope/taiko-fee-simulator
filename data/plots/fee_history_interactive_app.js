@@ -24,6 +24,7 @@
   const SWEEP_KD_VALUES = Object.freeze([0.0]);
   const SWEEP_I_MAX_VALUES = Object.freeze([5.0, 10.0, 100.0]);
   const SWEEP_MAX_BLOCKS = 200000;
+  const DOTTED_SAVED_RUN_OPACITY = 0.6;
   const MAX_SAVED_RUNS = 6;
   const SAVED_RUNS_STORAGE_KEY = 'fee_history_interactive_saved_runs_v1';
   const SHARED_RUNS_HASH_KEY = 'sharedRuns';
@@ -855,6 +856,31 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function withAlpha(color, alpha) {
+    const raw = String(color || '').trim();
+    const safeAlpha = clampNum(Number(alpha), 0, 1);
+
+    const hex6 = /^#([0-9a-f]{6})$/i.exec(raw);
+    if (hex6) {
+      const value = hex6[1];
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+    }
+
+    const hex3 = /^#([0-9a-f]{3})$/i.exec(raw);
+    if (hex3) {
+      const value = hex3[1];
+      const r = parseInt(value[0] + value[0], 16);
+      const g = parseInt(value[1] + value[1], 16);
+      const b = parseInt(value[2] + value[2], 16);
+      return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+    }
+
+    return raw;
   }
 
   function currentBlobMode() {
@@ -1938,9 +1964,11 @@
       for (let i = 0; i < MAX_SAVED_RUNS; i++) {
         const slot = plot.series[startIndex + i];
         if (!slot) continue;
+        const baseColor = SAVED_RUN_COLORS[i % SAVED_RUN_COLORS.length];
         let label = `Saved run ${i + 1} ${metricLabel}`;
         let dash = [6, 4];
         let width = 1.1;
+        let stroke = withAlpha(baseColor, DOTTED_SAVED_RUN_OPACITY);
         let show = false;
         const run = savedRuns[i];
         if (run) {
@@ -1948,12 +1976,14 @@
           label = `${name} ${metricLabel}`;
           dash = run.solidLine ? [] : [6, 4];
           width = run.solidLine ? 1.4 : 1.1;
+          stroke = run.solidLine ? baseColor : withAlpha(baseColor, DOTTED_SAVED_RUN_OPACITY);
           show = Boolean(run.visible && runMatchesCurrentView(run));
         }
 
         if (
           slot.label === label
           && String(slot.width) === String(width)
+          && slot._savedStrokeColor === stroke
           && Boolean(slot.show !== false) === show
           && Array.isArray(slot.dash)
           && Array.isArray(dash)
@@ -1975,6 +2005,11 @@
         }
         if (String(slot.width) !== String(width)) {
           slot.width = width;
+          needsRedraw = true;
+        }
+        if (slot._savedStrokeColor !== stroke) {
+          slot.stroke = function () { return stroke; };
+          slot._savedStrokeColor = stroke;
           needsRedraw = true;
         }
         if (slot.label !== label) slot.label = label;
