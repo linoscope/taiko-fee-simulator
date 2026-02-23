@@ -2891,7 +2891,7 @@
   async function runParameterSweep() {
     if (sweepRunning) return;
     if (currentFeeMechanism() !== 'taiko') {
-      setSweepStatus('Sweep currently supports PID+FF mechanism only. Switch Fee mechanism to "PID Controller + FF".');
+      setSweepStatus('Sweep currently supports PID+FF mechanism only. Switch Fee mechanism to "PID Controller with Feedforward".');
       return;
     }
     recalcDerivedSeries();
