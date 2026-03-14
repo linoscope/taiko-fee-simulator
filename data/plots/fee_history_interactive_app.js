@@ -18,12 +18,6 @@
   const DEFAULT_ARB_EQUIL_UNITS = 96000000;
   const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({ low: 0.7, base: 1.0, high: 1.4 });
-  const SWEEP_ALPHA_VARIANTS = Object.freeze(['current', 'zero']);
-  const SWEEP_KP_VALUES = Object.freeze([0.0, 0.02, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6]);
-  const SWEEP_KI_VALUES = Object.freeze([0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5, 1.0]);
-  const SWEEP_KD_VALUES = Object.freeze([0.0]);
-  const SWEEP_I_MAX_VALUES = Object.freeze([5.0, 10.0, 100.0]);
-  const SWEEP_MAX_BLOCKS = 200000;
   const DOTTED_SAVED_RUN_OPACITY = 0.6;
   const MAX_SAVED_RUNS = 6;
   const SAVED_RUNS_STORAGE_KEY = 'fee_history_interactive_saved_runs_v1';
@@ -137,20 +131,6 @@
   const maxFeeGweiInput = document.getElementById('maxFeeGwei');
   const initialVaultEthInput = document.getElementById('initialVaultEth');
   const targetVaultEthInput = document.getElementById('targetVaultEth');
-  const deficitDeadbandPctInput = document.getElementById('deficitDeadbandPct');
-  const scoreWeightHealthInput = document.getElementById('scoreWeightHealth');
-  const scoreWeightUxInput = document.getElementById('scoreWeightUx');
-  const healthWDrawInput = document.getElementById('healthWDraw');
-  const healthWUnderInput = document.getElementById('healthWUnder');
-  const healthWAreaInput = document.getElementById('healthWArea');
-  const healthWStreakInput = document.getElementById('healthWStreak');
-  const healthWPostBEInput = document.getElementById('healthWPostBE');
-  const uxWStdInput = document.getElementById('uxWStd');
-  const uxWP95Input = document.getElementById('uxWP95');
-  const uxWP99Input = document.getElementById('uxWP99');
-  const uxWMaxStepInput = document.getElementById('uxWMaxStep');
-  const uxWClampInput = document.getElementById('uxWClamp');
-  const uxWLevelInput = document.getElementById('uxWLevel');
 
   const derivedL2GasPerL1BlockText = document.getElementById('derivedL2GasPerL1Block');
   const derivedL2GasPerProposalText = document.getElementById('derivedL2GasPerProposal');
@@ -170,48 +150,9 @@
   const latestClampState = document.getElementById('latestClampState');
   const latestVaultValue = document.getElementById('latestVaultValue');
   const latestVaultGap = document.getElementById('latestVaultGap');
-  const scoreHealthBadness = document.getElementById('scoreHealthBadness');
-  const scoreUxBadness = document.getElementById('scoreUxBadness');
-  const scoreTotalBadness = document.getElementById('scoreTotalBadness');
-  const scoreWeightSummary = document.getElementById('scoreWeightSummary');
-  const healthMaxDrawdown = document.getElementById('healthMaxDrawdown');
-  const healthUnderTargetRatio = document.getElementById('healthUnderTargetRatio');
-  const healthPostBreakEvenRatio = document.getElementById('healthPostBreakEvenRatio');
-  const healthDeficitAreaBand = document.getElementById('healthDeficitAreaBand');
-  const healthWorstDeficitStreak = document.getElementById('healthWorstDeficitStreak');
-  const uxFeeStd = document.getElementById('uxFeeStd');
-  const uxFeeStepP95 = document.getElementById('uxFeeStepP95');
-  const uxFeeStepP99 = document.getElementById('uxFeeStepP99');
-  const uxFeeStepMax = document.getElementById('uxFeeStepMax');
-  const uxClampMaxRatio = document.getElementById('uxClampMaxRatio');
-  const uxFeeLevelMean = document.getElementById('uxFeeLevelMean');
-  const healthFormulaLine = document.getElementById('healthFormulaLine');
-  const uxFormulaLine = document.getElementById('uxFormulaLine');
-  const totalFormulaLine = document.getElementById('totalFormulaLine');
-  const scoreBtn = document.getElementById('scoreBtn');
-  const scoreStatus = document.getElementById('scoreStatus');
-  const scoreCard = document.getElementById('scoreCard');
   const controllerHelpBtn = document.getElementById('controllerHelpBtn');
   const controllerHelpModal = document.getElementById('controllerHelpModal');
   const controllerHelpClose = document.getElementById('controllerHelpClose');
-  const scoreHelpBtn = document.getElementById('scoreHelpBtn');
-  const scoreHelpModal = document.getElementById('scoreHelpModal');
-  const scoreHelpClose = document.getElementById('scoreHelpClose');
-  const sweepBtn = document.getElementById('sweepBtn');
-  const sweepCancelBtn = document.getElementById('sweepCancelBtn');
-  const sweepApplyBestBtn = document.getElementById('sweepApplyBestBtn');
-  const sweepStatus = document.getElementById('sweepStatus');
-  const sweepSpinner = document.getElementById('sweepSpinner');
-  const sweepBestAlphaVariant = document.getElementById('sweepBestAlphaVariant');
-  const sweepBestKp = document.getElementById('sweepBestKp');
-  const sweepBestKi = document.getElementById('sweepBestKi');
-  const sweepBestImax = document.getElementById('sweepBestImax');
-  const sweepBestHealth = document.getElementById('sweepBestHealth');
-  const sweepBestUx = document.getElementById('sweepBestUx');
-  const sweepBestTotal = document.getElementById('sweepBestTotal');
-  const sweepCandidateCount = document.getElementById('sweepCandidateCount');
-  const sweepRangeCount = document.getElementById('sweepRangeCount');
-  const sweepHover = document.getElementById('sweepHover');
   const saveRunBtn = document.getElementById('saveRunBtn');
   const shareRunsBtn = document.getElementById('shareRunsBtn');
   const toggleCurrentRunBtn = document.getElementById('toggleCurrentRunBtn');
@@ -232,7 +173,6 @@
   const controllerWrap = document.getElementById('controllerPlot');
   const feedbackWrap = document.getElementById('feedbackPlot');
   const vaultWrap = document.getElementById('vaultPlot');
-  const sweepWrap = document.getElementById('sweepPlot');
 
   let uiBusyCount = 0;
   let recalcPending = false;
@@ -258,8 +198,6 @@
     if (paramsCard) paramsCard.classList.add('stale');
     if (paramsDirtyHint) paramsDirtyHint.textContent = 'Stale: click Recompute derived charts';
     updateBlobEstimatePreview();
-    markScoreStale('parameter change pending recompute');
-    markSweepStale('parameter change pending recompute');
     if (reason) setStatus(reason);
   }
 
@@ -660,7 +598,6 @@
       if (blobPlot) blobPlot.setData([blocks, blobFeeGwei]);
 
       datasetReady = true;
-      markSweepStale('dataset changed');
       recalcDerivedSeries();
       clearParamsStale();
       applyRange(nextMin, nextMax, null);
@@ -750,13 +687,6 @@
       `, using ~${BLOCK_TIME_APPROX_SECONDS.toFixed(2)}s/block (${TIME_ANCHOR_SOURCE})`;
   }
 
-  function markScoreStale(reason) {
-    if (scoreCard) scoreCard.classList.add('stale');
-    if (!scoreStatus) return;
-    const why = reason ? ` (${reason})` : '';
-    scoreStatus.textContent = `Score is stale${why}. Click "Score current range" to compute.`;
-  }
-
   function onSetCursor(u) {
     if (!hoverText) return;
     const idx = u && u.cursor ? u.cursor.idx : null;
@@ -836,17 +766,6 @@
     if (lo === hi) return s[lo];
     const w = k - lo;
     return s[lo] * (1 - w) + s[hi] * w;
-  }
-
-  function normalizedWeightedSum(values, weights) {
-    let sumW = 0;
-    let sum = 0;
-    for (let i = 0; i < values.length; i++) {
-      const w = Math.max(0, weights[i] || 0);
-      sumW += w;
-      sum += w * values[i];
-    }
-    return sumW > 0 ? (sum / sumW) : 0;
   }
 
   function htmlEscape(raw) {
@@ -1083,266 +1002,6 @@
     numBlobsEstimatedInput.value = formatNum(estimated, 2);
   }
 
-  function computeScoredMetrics({
-    chargedFeeSeries,
-    vaultSeries,
-    requiredFeeSeries,
-    clampStateSeries,
-    postBreakEvenSeries,
-    targetSeries = null,
-    targetVaultEth,
-    maxFeeGwei,
-    deadbandPct,
-    scoreCfg,
-    i0,
-    i1,
-    skipNullSeries = false,
-    fallbackTargetDenomToOne = false,
-  }) {
-    const start = Math.floor(Number(i0));
-    const end = Math.floor(Number(i1));
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-    const n = end - start + 1;
-    if (n <= 0) return null;
-
-    const targetVault = Number.isFinite(Number(targetVaultEth)) ? Number(targetVaultEth) : 0;
-    const feeScale = Number(maxFeeGwei) > 0 ? Number(maxFeeGwei) : 1;
-    const deadbandFrac = Number(deadbandPct) / 100;
-
-    let maxDrawdownEth = 0;
-    let underCount = 0;
-    let deficitAreaBand = 0;
-    let worstStreak = 0;
-    let curStreak = 0;
-    let postCount = 0;
-    let postBreakEvenCount = 0;
-    let clampMaxCount = 0;
-
-    let feeSum = 0;
-    let feeSqSum = 0;
-    let feeCount = 0;
-    let breakEvenFeeSum = 0;
-    let breakEvenFeeCount = 0;
-    const feeSteps = [];
-    let maxStep = 0;
-    let feePrev = null;
-
-    for (let i = start; i <= end; i++) {
-      const fee = chargedFeeSeries[i];
-      const vault = vaultSeries[i];
-      if (skipNullSeries && (fee == null || vault == null)) continue;
-
-      const targetRaw = targetSeries ? targetSeries[i] : targetVault;
-      const target = Number.isFinite(Number(targetRaw)) ? Number(targetRaw) : targetVault;
-      const gap = vault - target;
-      const deadbandFloor = target * (1 - deadbandFrac);
-
-      if (vault < deadbandFloor) {
-        underCount += 1;
-        curStreak += 1;
-        if (curStreak > worstStreak) worstStreak = curStreak;
-      } else {
-        curStreak = 0;
-      }
-
-      maxDrawdownEth = Math.max(maxDrawdownEth, Math.max(0, -gap));
-      deficitAreaBand += Math.max(0, deadbandFloor - vault);
-
-      if (clampStateSeries[i] === 'max') clampMaxCount += 1;
-      const postBreakEven = postBreakEvenSeries[i];
-      if (postBreakEven != null) {
-        postCount += 1;
-        if (postBreakEven) postBreakEvenCount += 1;
-      }
-
-      feeSum += fee;
-      feeSqSum += fee * fee;
-      feeCount += 1;
-      const breakEvenFee = requiredFeeSeries[i];
-      if (breakEvenFee != null && Number.isFinite(breakEvenFee)) {
-        breakEvenFeeSum += breakEvenFee;
-        breakEvenFeeCount += 1;
-      }
-
-      if (feePrev != null) {
-        const step = Math.abs(fee - feePrev);
-        feeSteps.push(step);
-        if (step > maxStep) maxStep = step;
-      }
-      feePrev = fee;
-    }
-
-    const feeStatsCount = skipNullSeries ? feeCount : n;
-    const feeMean = feeStatsCount > 0 ? (feeSum / feeStatsCount) : 0;
-    const feeVar = feeStatsCount > 0 ? Math.max(0, (feeSqSum / feeStatsCount) - feeMean * feeMean) : 0;
-    const feeStd = Math.sqrt(feeVar);
-    const stepP95 = percentile(feeSteps, 95);
-    const stepP99 = percentile(feeSteps, 99);
-    const clampMaxRatio = clampMaxCount / n;
-    const breakEvenFeeMean = breakEvenFeeCount > 0 ? (breakEvenFeeSum / breakEvenFeeCount) : 0;
-    const underTargetRatio = underCount / n;
-    const postBreakEvenRatio = postCount > 0 ? (postBreakEvenCount / postCount) : 1;
-    const dPost = 1 - postBreakEvenRatio;
-
-    const targetDenom = targetVault > 0 ? targetVault : (fallbackTargetDenomToOne ? 1 : 0);
-    const dDraw = targetDenom > 0 ? (maxDrawdownEth / targetDenom) : 0;
-    const dUnder = underTargetRatio;
-    const dArea = targetDenom > 0 ? (deficitAreaBand / (targetDenom * n)) : 0;
-    const dStreak = n > 0 ? (worstStreak / n) : 0;
-
-    const uStd = feeStd / feeScale;
-    const uP95 = stepP95 / feeScale;
-    const uP99 = stepP99 / feeScale;
-    const uMax = maxStep / feeScale;
-    const uClamp = clampMaxRatio;
-    const uLevel = breakEvenFeeMean > 0
-      ? Math.max(0, feeMean - breakEvenFeeMean) / breakEvenFeeMean
-      : 0;
-
-    const healthBadness = normalizedWeightedSum(
-      [dDraw, dUnder, dArea, dStreak, dPost],
-      [scoreCfg.wDraw, scoreCfg.wUnder, scoreCfg.wArea, scoreCfg.wStreak, scoreCfg.wPostBE]
-    );
-    const uxBadness = normalizedWeightedSum(
-      [uStd, uP95, uP99, uMax, uClamp, uLevel],
-      [scoreCfg.wStd, scoreCfg.wP95, scoreCfg.wP99, scoreCfg.wMaxStep, scoreCfg.wClamp, scoreCfg.wLevel]
-    );
-    const totalBadness = normalizedWeightedSum(
-      [healthBadness, uxBadness],
-      [scoreCfg.wHealth, scoreCfg.wUx]
-    );
-
-    return {
-      n,
-      deadbandPct,
-      maxDrawdownEth,
-      underTargetRatio,
-      postBreakEvenRatio,
-      deficitAreaBand,
-      worstStreak,
-      feeStd,
-      stepP95,
-      stepP99,
-      maxStep,
-      clampMaxRatio,
-      uLevel,
-      dDraw,
-      dUnder,
-      dArea,
-      dStreak,
-      dPost,
-      uStd,
-      uP95,
-      uP99,
-      uMax,
-      uClamp,
-      healthBadness,
-      uxBadness,
-      totalBadness,
-    };
-  }
-
-  function updateScorecard(minBlock, maxBlock, maxFeeGwei, targetVaultEth) {
-    if (!derivedVaultEth.length || !derivedChargedFeeGwei.length) return null;
-    const i0 = lowerBound(blocks, minBlock);
-    const i1 = upperBound(blocks, maxBlock) - 1;
-    if (i0 < 0 || i1 < i0 || i1 >= blocks.length) return null;
-
-    const scoreCfg = parseScoringWeights();
-    const metrics = computeScoredMetrics({
-      chargedFeeSeries: derivedChargedFeeGwei,
-      vaultSeries: derivedVaultEth,
-      requiredFeeSeries: derivedRequiredFeeGwei,
-      clampStateSeries: derivedClampState,
-      postBreakEvenSeries: derivedPostBreakEvenFlag,
-      targetSeries: derivedVaultTargetEth,
-      targetVaultEth,
-      maxFeeGwei,
-      deadbandPct: scoreCfg.deadbandPct,
-      scoreCfg,
-      i0,
-      i1,
-      skipNullSeries: false,
-      fallbackTargetDenomToOne: false,
-    });
-    if (!metrics) return null;
-
-    scoreHealthBadness.textContent = formatNum(metrics.healthBadness, 6);
-    scoreUxBadness.textContent = formatNum(metrics.uxBadness, 6);
-    scoreTotalBadness.textContent = formatNum(metrics.totalBadness, 6);
-    scoreWeightSummary.textContent =
-      `overall weights: health=${formatNum(scoreCfg.wHealth, 3)}, ux=${formatNum(scoreCfg.wUx, 3)}`;
-
-    healthMaxDrawdown.textContent = `${formatNum(metrics.maxDrawdownEth, 6)} ETH`;
-    healthUnderTargetRatio.textContent = `${formatNum(metrics.underTargetRatio, 4)}`;
-    healthPostBreakEvenRatio.textContent = `${formatNum(metrics.postBreakEvenRatio, 4)}`;
-    healthDeficitAreaBand.textContent = `${formatNum(metrics.deficitAreaBand, 6)} ETH*block`;
-    healthWorstDeficitStreak.textContent = `${formatNum(metrics.worstStreak, 0)} blocks`;
-
-    uxFeeStd.textContent = `${formatNum(metrics.feeStd, 6)} gwei/L2gas`;
-    uxFeeStepP95.textContent = `${formatNum(metrics.stepP95, 6)} gwei/L2gas`;
-    uxFeeStepP99.textContent = `${formatNum(metrics.stepP99, 6)} gwei/L2gas`;
-    uxFeeStepMax.textContent = `${formatNum(metrics.maxStep, 6)} gwei/L2gas`;
-    uxClampMaxRatio.textContent = `${formatNum(metrics.clampMaxRatio, 4)}`;
-    uxFeeLevelMean.textContent = `${formatNum(metrics.uLevel, 4)}`;
-
-    healthFormulaLine.textContent =
-      `health_badness = wDraw*dDraw + wUnder*dUnder + wArea*dArea + wStreak*dStreak + wPostBE*dPost ` +
-      `(dDraw=${formatNum(metrics.dDraw, 4)}, dUnder=${formatNum(metrics.dUnder, 4)}, dArea=${formatNum(metrics.dArea, 4)}, dStreak=${formatNum(metrics.dStreak, 4)}, dPost=${formatNum(metrics.dPost, 4)})`;
-    uxFormulaLine.textContent =
-      `ux_badness = wStd*uStd + wP95*uP95 + wP99*uP99 + wMax*uMax + wClamp*uClamp + wLevel*uLevel ` +
-      `(uStd=${formatNum(metrics.uStd, 4)}, uP95=${formatNum(metrics.uP95, 4)}, uP99=${formatNum(metrics.uP99, 4)}, uMax=${formatNum(metrics.uMax, 4)}, uClamp=${formatNum(metrics.uClamp, 4)}, uLevel=${formatNum(metrics.uLevel, 4)})`;
-    totalFormulaLine.textContent =
-      `total_badness = wHealth*health_badness + wUx*ux_badness = ${formatNum(metrics.totalBadness, 6)} ` +
-      `(deadband=${formatNum(metrics.deadbandPct, 2)}%, blocks=${metrics.n.toLocaleString()})`;
-
-    if (scoreStatus) {
-      scoreStatus.textContent =
-        `Scored blocks ${blocks[i0].toLocaleString()}-${blocks[i1].toLocaleString()} ` +
-        `(${metrics.n.toLocaleString()} blocks).`;
-    }
-    if (scoreCard) scoreCard.classList.remove('stale');
-    return {
-      i0,
-      i1,
-      n: metrics.n,
-      healthBadness: metrics.healthBadness,
-      uxBadness: metrics.uxBadness,
-      totalBadness: metrics.totalBadness
-    };
-  }
-
-  function scoreCurrentRangeNow() {
-    const mechanism = currentFeeMechanism();
-    const [minB, maxB] = clampRange(minInput.value, maxInput.value);
-    const score = updateScorecard(
-      minB,
-      maxB,
-      parsePositive(maxFeeGweiInput, 1.0),
-      parsePositive(targetVaultEthInput, 10.0)
-    );
-    if (!score) return;
-
-    sweepScoredHistory.push({
-      uxBadness: score.uxBadness,
-      healthBadness: score.healthBadness,
-      totalBadness: score.totalBadness,
-      mode: mechanism,
-      alphaVariant: mechanism === 'taiko' ? (autoAlphaInput.checked ? 'auto' : 'current') : 'n/a',
-      alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
-      alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
-      kp: parsePositive(kpInput, 0),
-      ki: parsePositive(kiInput, 0),
-      kd: parsePositive(kdInput, 0),
-      iMax: parseNumber(iMaxInput, 0),
-      scoredRangeMin: minB,
-      scoredRangeMax: maxB
-    });
-    if (sweepScoredHistory.length > 256) sweepScoredHistory.shift();
-
-    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
-  }
-
   function ensureFeedforwardDefaults() {
     const alphaGasNow = parsePositive(alphaGasInput, 0);
     const alphaBlobNow = parsePositive(alphaBlobInput, 0);
@@ -1495,15 +1154,6 @@
   let derivedClampState = [];
   let derivedVaultEth = [];
   let derivedVaultTargetEth = [];
-  let sweepPlot;
-  let sweepRunning = false;
-  let sweepCancelRequested = false;
-  let sweepBestCandidate = null;
-  let sweepResults = [];
-  let sweepCurrentPoint = null;
-  let sweepScoredHistory = [];
-  let sweepRunSeq = 0;
-  let sweepPoints = [];
   const savedRunManager = createSavedRunManager();
   let currentRunSnapshot = null;
 
@@ -2308,100 +1958,6 @@
     legendRows[seriesIndex].style.display = show ? '' : 'none';
   }
 
-  function setSweepUiState(running) {
-    sweepRunning = running;
-    if (sweepBtn) sweepBtn.disabled = running;
-    if (sweepCancelBtn) sweepCancelBtn.disabled = !running;
-    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = running || !sweepBestCandidate;
-    if (sweepSpinner) sweepSpinner.style.display = running ? 'inline-block' : 'none';
-  }
-
-  function setSweepStatus(msg) {
-    if (sweepStatus) sweepStatus.textContent = msg || '';
-  }
-
-  function setSweepHoverText(msg) {
-    if (!sweepHover) return;
-    sweepHover.textContent = msg || 'Hover point: -';
-  }
-
-  function resetSweepState(reason) {
-    sweepResults = [];
-    sweepBestCandidate = null;
-    sweepCurrentPoint = null;
-    sweepScoredHistory = [];
-    sweepPoints = [];
-    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = true;
-    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = '-';
-    if (sweepBestKp) sweepBestKp.textContent = '-';
-    if (sweepBestKi) sweepBestKi.textContent = '-';
-    if (sweepBestImax) sweepBestImax.textContent = '-';
-    if (sweepBestHealth) sweepBestHealth.textContent = '-';
-    if (sweepBestUx) sweepBestUx.textContent = '-';
-    if (sweepBestTotal) sweepBestTotal.textContent = '-';
-    if (sweepCandidateCount) sweepCandidateCount.textContent = '-';
-    if (sweepRangeCount) sweepRangeCount.textContent = '-';
-    renderSweepScatter([], null, null, []);
-    setSweepHoverText('Hover point: -');
-    markSweepStale(reason || 'range changed');
-  }
-
-  function markSweepStale(reason) {
-    if (sweepRunning) return;
-    const why = reason ? ` (${reason})` : '';
-    setSweepStatus(`Sweep stale${why}. Run parameter sweep to refresh.`);
-  }
-
-  function getSweepRangeIndices() {
-    if (!datasetReady || !blocks.length) return null;
-    const [minB, maxB] = clampRange(minInput.value, maxInput.value);
-    const i0 = lowerBound(blocks, minB);
-    const i1 = upperBound(blocks, maxB) - 1;
-    if (i0 >= blocks.length || i1 < i0) return null;
-    return { minB, maxB, i0, i1, n: i1 - i0 + 1 };
-  }
-
-  function parseScoringWeights() {
-    return {
-      deadbandPct: parsePositive(deficitDeadbandPctInput, 5.0),
-      wHealth: parsePositive(scoreWeightHealthInput, 0.75),
-      wUx: parsePositive(scoreWeightUxInput, 0.25),
-      wDraw: parsePositive(healthWDrawInput, 0.35),
-      wUnder: parsePositive(healthWUnderInput, 0.25),
-      wArea: parsePositive(healthWAreaInput, 0.2),
-      wStreak: parsePositive(healthWStreakInput, 0.1),
-      wPostBE: parsePositive(healthWPostBEInput, 0.2),
-      wStd: parsePositive(uxWStdInput, 0.2),
-      wP95: parsePositive(uxWP95Input, 0.2),
-      wP99: parsePositive(uxWP99Input, 0.1),
-      wMaxStep: parsePositive(uxWMaxStepInput, 0.05),
-      wClamp: parsePositive(uxWClampInput, 0.05),
-      wLevel: parsePositive(uxWLevelInput, 0.4)
-    };
-  }
-
-  function buildSweepCandidates() {
-    const out = [];
-    for (const kp of SWEEP_KP_VALUES) {
-      for (const ki of SWEEP_KI_VALUES) {
-        for (const kd of SWEEP_KD_VALUES) {
-          for (const iMax of SWEEP_I_MAX_VALUES) {
-            for (const alphaVariant of SWEEP_ALPHA_VARIANTS) {
-              out.push({
-                alphaVariant,
-                kp,
-                ki,
-                kd,
-                iMax
-              });
-            }
-          }
-        }
-      }
-    }
-    return out;
-  }
-
   function recalcDerivedSeries() {
     if (!datasetReady || !blocks.length) {
       setStatus('Loading dataset...');
@@ -2657,493 +2213,6 @@
     latestClampState.textContent = derivedClampState[lastIdx];
     latestVaultValue.textContent = `${formatNum(derivedVaultEth[lastIdx], 6)} ETH`;
     latestVaultGap.textContent = `${formatNum(derivedVaultEth[lastIdx] - targetVaultEth, 6)} ETH`;
-    if (sweepResults.length) {
-      const sweepRange = getSweepRangeIndices();
-      if (sweepRange && feeMechanism === 'taiko') {
-        const sweepScoreCfg = parseScoringWeights();
-        const sweepSimCfg = {
-          postEveryBlocks,
-          l1GasUsed,
-          blobMode,
-          fixedNumBlobs,
-          blobModel: {
-            txGas: blobModel.txGas,
-            txBytes: blobModel.txBytes,
-            batchOverheadBytes: blobModel.batchOverheadBytes,
-            compressionRatio: blobModel.compressionRatio,
-            blobUtilization: blobModel.blobUtilization,
-            minBlobsPerProposal: blobModel.minBlobsPerProposal
-          },
-          priorityFeeWei,
-          dffBlocks,
-          dfbBlocks,
-          derivBeta,
-          iMin,
-          iMax,
-          minFeeWei,
-          maxFeeWei,
-          maxFeeGwei,
-          pTermMinWei,
-          initialVaultEth,
-          targetVaultEth,
-          alphaGas,
-          alphaBlob,
-          l2GasPerL1BlockSeries: derivedL2GasPerL1Block
-        };
-        sweepCurrentPoint = evaluateSweepCandidate(
-          sweepRange.i0,
-          sweepRange.i1,
-          {
-            mode: 'taiko',
-            alphaVariant: 'current',
-            alphaGas,
-            alphaBlob,
-            kp,
-            ki,
-            kd
-          },
-          sweepSimCfg,
-          sweepScoreCfg
-        );
-      } else {
-        sweepCurrentPoint = null;
-      }
-      renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
-    }
-    markScoreStale('recomputed charts');
-  }
-
-  function evaluateSweepCandidate(i0, i1, candidate, simCfg, scoreCfg) {
-    const candidateAlphaGas = Number.isFinite(candidate.alphaGas)
-      ? Math.max(0, candidate.alphaGas)
-      : Math.max(0, simCfg.alphaGas);
-    const candidateAlphaBlob = Number.isFinite(candidate.alphaBlob)
-      ? Math.max(0, candidate.alphaBlob)
-      : Math.max(0, simCfg.alphaBlob);
-    const candidateAlphaVariant = candidate.alphaVariant || 'current';
-    const n = i1 - i0 + 1;
-
-    const iMaxSweep = Number.isFinite(candidate.iMax) ? candidate.iMax : simCfg.iMax;
-    const simulation = simCore.simulateSeries({
-      mechanism: 'taiko',
-      baseFeeGwei: baseFeeGwei.slice(i0, i1 + 1),
-      blobFeeGwei: blobFeeGwei.slice(i0, i1 + 1),
-      l2GasPerL1BlockSeries: simCfg.l2GasPerL1BlockSeries.slice(i0, i1 + 1),
-      fullLength: n,
-      rangeStart: 0,
-      rangeEnd: n - 1,
-      blockIndexOffset: i0,
-      postEveryBlocks: simCfg.postEveryBlocks,
-      l1GasUsed: simCfg.l1GasUsed,
-      blobMode: simCfg.blobMode,
-      fixedNumBlobs: simCfg.fixedNumBlobs,
-      blobModel: simCfg.blobModel,
-      priorityFeeWei: simCfg.priorityFeeWei,
-      dffBlocks: simCfg.dffBlocks,
-      dfbBlocks: simCfg.dfbBlocks,
-      derivBeta: simCfg.derivBeta,
-      kp: candidate.kp,
-      ki: candidate.ki,
-      kd: candidate.kd,
-      pTermMinWei: simCfg.pTermMinWei,
-      iMin: simCfg.iMin,
-      iMax: iMaxSweep,
-      minFeeWei: simCfg.minFeeWei,
-      maxFeeWei: simCfg.maxFeeWei,
-      alphaGas: candidateAlphaGas,
-      alphaBlob: candidateAlphaBlob,
-      initialVaultEth: simCfg.initialVaultEth,
-      targetVaultEth: simCfg.targetVaultEth,
-      collectBreakdown: true
-    });
-
-    const metrics = computeScoredMetrics({
-      chargedFeeSeries: simulation.chargedFeeGwei,
-      vaultSeries: simulation.vaultEth,
-      requiredFeeSeries: simulation.requiredFeeGwei,
-      clampStateSeries: simulation.clampState,
-      postBreakEvenSeries: simulation.postBreakEvenFlag,
-      targetVaultEth: simCfg.targetVaultEth,
-      maxFeeGwei: simCfg.maxFeeGwei,
-      deadbandPct: scoreCfg.deadbandPct,
-      scoreCfg,
-      i0: 0,
-      i1: n - 1,
-      skipNullSeries: true,
-      fallbackTargetDenomToOne: true,
-    });
-
-    return {
-      mode: 'taiko',
-      alphaVariant: candidateAlphaVariant,
-      alphaGas: candidateAlphaGas,
-      alphaBlob: candidateAlphaBlob,
-      kp: candidate.kp,
-      ki: candidate.ki,
-      kd: candidate.kd,
-      iMax: iMaxSweep,
-      nBlocks: metrics.n,
-      healthBadness: metrics.healthBadness,
-      uxBadness: metrics.uxBadness,
-      totalBadness: metrics.totalBadness,
-      maxDrawdownEth: metrics.maxDrawdownEth,
-      underTargetRatio: metrics.underTargetRatio,
-      postBreakEvenRatio: metrics.postBreakEvenRatio,
-      feeStd: metrics.feeStd,
-      stepP95: metrics.stepP95,
-      stepP99: metrics.stepP99,
-      maxStep: metrics.maxStep,
-      clampMaxRatio: metrics.clampMaxRatio,
-      uLevel: metrics.uLevel
-    };
-  }
-
-  function renderSweepScatter(results, best, currentPoint, scoredHistory) {
-    if (!sweepPlot) return;
-    const points = [];
-    const scoredPoints = Array.isArray(scoredHistory) ? scoredHistory : [];
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      const isBest = Boolean(
-        best &&
-        r.alphaVariant === best.alphaVariant &&
-        r.kp === best.kp &&
-        r.ki === best.ki &&
-        r.kd === best.kd &&
-        r.iMax === best.iMax
-      );
-      points.push({
-        ux: r.uxBadness,
-        health: r.healthBadness,
-        total: r.totalBadness,
-        mode: r.mode,
-        alphaVariant: r.alphaVariant || 'current',
-        alphaGas: r.alphaGas,
-        alphaBlob: r.alphaBlob,
-        kp: r.kp,
-        ki: r.ki,
-        kd: r.kd,
-        iMax: r.iMax,
-        isBest,
-        isCurrent: false,
-        isScored: false,
-        isLatestScored: false
-      });
-    }
-    if (
-      currentPoint &&
-      Number.isFinite(currentPoint.uxBadness) &&
-      Number.isFinite(currentPoint.healthBadness)
-    ) {
-      points.push({
-        ux: currentPoint.uxBadness,
-        health: currentPoint.healthBadness,
-        total: currentPoint.totalBadness,
-        mode: currentPoint.mode,
-        alphaVariant: currentPoint.alphaVariant || 'current',
-        alphaGas: currentPoint.alphaGas,
-        alphaBlob: currentPoint.alphaBlob,
-        kp: currentPoint.kp,
-        ki: currentPoint.ki,
-        kd: currentPoint.kd,
-        iMax: currentPoint.iMax,
-        isBest: false,
-        isCurrent: true,
-        isScored: false,
-        isLatestScored: false
-      });
-    }
-    for (let i = 0; i < scoredPoints.length; i++) {
-      const p = scoredPoints[i];
-      if (!Number.isFinite(p.uxBadness) || !Number.isFinite(p.healthBadness)) continue;
-      points.push({
-        ux: p.uxBadness,
-        health: p.healthBadness,
-        total: p.totalBadness,
-        mode: p.mode || '-',
-        alphaVariant: p.alphaVariant || 'current',
-        alphaGas: p.alphaGas,
-        alphaBlob: p.alphaBlob,
-        kp: p.kp,
-        ki: p.ki,
-        kd: p.kd,
-        iMax: p.iMax,
-        isBest: false,
-        isCurrent: false,
-        isScored: true,
-        isLatestScored: i === scoredPoints.length - 1
-      });
-    }
-    // Always include the origin as a visual reference point for the tradeoff chart.
-    points.push({
-      ux: 0,
-      health: 0,
-      total: 0,
-      mode: 'origin',
-      alphaVariant: '-',
-      alphaGas: 0,
-      alphaBlob: 0,
-      kp: 0,
-      ki: 0,
-      kd: 0,
-      iMax: 0,
-      isBest: false,
-      isCurrent: false,
-      isScored: false,
-      isLatestScored: false,
-      isOrigin: true
-    });
-    points.sort(function (a, b) {
-      if (a.ux !== b.ux) return a.ux - b.ux;
-      return a.health - b.health;
-    });
-
-    const x = new Array(points.length);
-    const allY = new Array(points.length);
-    const bestY = new Array(points.length);
-    const currentY = new Array(points.length);
-    const scoredY = new Array(points.length);
-    const latestScoredY = new Array(points.length);
-    const originY = new Array(points.length);
-
-    let xMin = Infinity;
-    let xMax = -Infinity;
-    let yMin = Infinity;
-    let yMax = -Infinity;
-
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      p.rank = i + 1;
-      x[i] = p.ux;
-      allY[i] = p.health;
-      bestY[i] = p.isBest ? p.health : null;
-      currentY[i] = p.isCurrent ? p.health : null;
-      scoredY[i] = p.isScored && !p.isLatestScored ? p.health : null;
-      latestScoredY[i] = p.isLatestScored ? p.health : null;
-      originY[i] = p.isOrigin ? p.health : null;
-      if (p.ux < xMin) xMin = p.ux;
-      if (p.ux > xMax) xMax = p.ux;
-      if (p.health < yMin) yMin = p.health;
-      if (p.health > yMax) yMax = p.health;
-    }
-
-    sweepPoints = points;
-    sweepPlot.setData([x, allY, bestY, currentY, scoredY, latestScoredY, originY]);
-    if (points.length) {
-      const xSpan = Math.max(xMax - xMin, 1e-9);
-      const ySpan = Math.max(yMax - yMin, 1e-9);
-      const xPad = xSpan * 0.08;
-      const yPad = ySpan * 0.08;
-      sweepPlot.batch(function () {
-        sweepPlot.setScale('x', { min: xMin - xPad, max: xMax + xPad });
-        sweepPlot.setScale('y', { min: yMin - yPad, max: yMax + yPad });
-      });
-    }
-  }
-
-  function onSetSweepCursor(u) {
-    const idx = u && u.cursor ? u.cursor.idx : null;
-    if (idx == null || idx < 0 || idx >= sweepPoints.length) {
-      setSweepHoverText('Hover point: -');
-      return;
-    }
-    const p = sweepPoints[idx];
-    if (!p) {
-      setSweepHoverText('Hover point: -');
-      return;
-    }
-    const rankPart = Number.isFinite(p.rank) ? `#${p.rank}` : '-';
-    const tagParts = [];
-    if (p.isOrigin) tagParts.push('origin');
-    if (p.isBest) tagParts.push('best');
-    if (p.isCurrent) tagParts.push('current');
-    if (p.isScored) tagParts.push('scored');
-    if (p.isLatestScored) tagParts.push('latest');
-    const tagText = tagParts.length ? ` (${tagParts.join(', ')})` : '';
-    setSweepHoverText(
-      `Hover point ${rankPart}${tagText}: mechanism=${(p.mode === 'taiko' ? 'pid+ff' : p.mode)}, alpha=${p.alphaVariant}, ` +
-      `Kp=${formatNum(p.kp, 4)}, Ki=${formatNum(p.ki, 4)}, Kd=${formatNum(p.kd, 4)}, Imax=${formatNum(p.iMax, 4)}, ` +
-      `health=${formatNum(p.health, 6)}, UX=${formatNum(p.ux, 6)}, total=${formatNum(p.total, 6)}`
-    );
-  }
-
-  async function runParameterSweep() {
-    if (sweepRunning) return;
-    if (currentFeeMechanism() !== 'taiko') {
-      setSweepStatus('Sweep currently supports PID+FF mechanism only. Switch Fee mechanism to "PID Controller with Feedforward".');
-      return;
-    }
-    recalcDerivedSeries();
-    clearParamsStale();
-
-    const range = getSweepRangeIndices();
-    if (!range) {
-      setSweepStatus('Sweep failed: invalid selected range.');
-      return;
-    }
-    if (range.n > SWEEP_MAX_BLOCKS) {
-      setSweepStatus(
-        `Sweep range too large (${range.n.toLocaleString()} blocks). ` +
-        `Please zoom to <= ${SWEEP_MAX_BLOCKS.toLocaleString()} blocks.`
-      );
-      return;
-    }
-
-    const candidates = buildSweepCandidates();
-    if (!candidates.length) {
-      setSweepStatus('No sweep candidates configured.');
-      return;
-    }
-
-    const runParams = normalizeRunParams({
-      postEveryBlocks: parsePositiveInt(postEveryBlocksInput, 10),
-      l1GasUsed: parsePositive(l1GasUsedInput, 0),
-      blobMode: currentBlobMode(),
-      fixedNumBlobs: parsePositive(numBlobsInput, 0),
-      blobModel: parseBlobModelInputs(),
-      priorityFeeGwei: parsePositive(priorityFeeGweiInput, 0),
-      dffBlocks: parseNonNegativeInt(dffBlocksInput, 5),
-      dfbBlocks: parsePositiveInt(dfbBlocksInput, 5),
-      derivBeta: clampNum(parseNumber(dSmoothBetaInput, 0.8), 0, 1),
-      pTermMinGwei: parseNumber(pMinGweiInput, 0.0),
-      iMin: parseNumber(iMinInput, -5),
-      iMax: parseNumber(iMaxInput, 5),
-      minFeeGwei: parsePositive(minFeeGweiInput, 0.01),
-      maxFeeGwei: parsePositive(maxFeeGweiInput, 1.0),
-      initialVaultEth: parsePositive(initialVaultEthInput, 0),
-      targetVaultEth: parsePositive(targetVaultEthInput, 0),
-      alphaGas: parsePositive(alphaGasInput, DEFAULT_ALPHA_GAS),
-      alphaBlob: parsePositive(alphaBlobInput, DEFAULT_ALPHA_BLOB),
-    });
-    const controllerCfg = buildCoreControllerConfig(runParams);
-    const alphaGasFixed = runParams.alphaGas;
-    const alphaBlobFixed = runParams.alphaBlob;
-    const scoreCfg = parseScoringWeights();
-    const simCfg = {
-      postEveryBlocks: runParams.postEveryBlocks,
-      l1GasUsed: runParams.l1GasUsed,
-      blobMode: runParams.blobMode,
-      fixedNumBlobs: runParams.fixedNumBlobs,
-      blobModel: runParams.blobModel,
-      priorityFeeWei: controllerCfg.priorityFeeWei,
-      dffBlocks: runParams.dffBlocks,
-      dfbBlocks: runParams.dfbBlocks,
-      derivBeta: runParams.derivBeta,
-      iMin: runParams.iMin,
-      iMax: runParams.iMax,
-      minFeeWei: controllerCfg.minFeeWei,
-      maxFeeWei: controllerCfg.maxFeeWei,
-      maxFeeGwei: runParams.maxFeeGwei,
-      pTermMinWei: controllerCfg.pTermMinWei,
-      initialVaultEth: runParams.initialVaultEth,
-      targetVaultEth: runParams.targetVaultEth,
-      alphaGas: alphaGasFixed,
-      alphaBlob: alphaBlobFixed,
-      l2GasPerL1BlockSeries: derivedL2GasPerL1Block
-    };
-
-    sweepCancelRequested = false;
-    const runId = ++sweepRunSeq;
-    setSweepUiState(true);
-    if (sweepCandidateCount) sweepCandidateCount.textContent = `${candidates.length} candidates`;
-    if (sweepRangeCount) sweepRangeCount.textContent = `${range.n.toLocaleString()} blocks`;
-    setSweepStatus(
-      `Running sweep on blocks ${range.minB.toLocaleString()}-${range.maxB.toLocaleString()}...`
-    );
-
-    const started = performance.now();
-    let lastYield = started;
-    const results = [];
-    setSweepHoverText('Hover point: -');
-    for (let idx = 0; idx < candidates.length; idx++) {
-      if (sweepCancelRequested || runId !== sweepRunSeq) break;
-      const cand = candidates[idx];
-      const useZeroAlpha = cand.alphaVariant === 'zero';
-      const result = evaluateSweepCandidate(
-        range.i0,
-        range.i1,
-        {
-          alphaVariant: cand.alphaVariant,
-          alphaGas: useZeroAlpha ? 0 : alphaGasFixed,
-          alphaBlob: useZeroAlpha ? 0 : alphaBlobFixed,
-          kp: cand.kp,
-          ki: cand.ki,
-          kd: cand.kd,
-          iMax: cand.iMax
-        },
-        simCfg,
-        scoreCfg
-      );
-      results.push(result);
-
-      if ((idx + 1) % 5 === 0 || idx + 1 === candidates.length) {
-        setSweepStatus(
-          `Sweep progress: ${(idx + 1).toLocaleString()} / ${candidates.length.toLocaleString()} candidates`
-        );
-        const now = performance.now();
-        if (now - lastYield > 24) {
-          await new Promise(function (resolve) { setTimeout(resolve, 0); });
-          lastYield = performance.now();
-        }
-      }
-    }
-
-    if (runId !== sweepRunSeq) return;
-
-    const elapsedSec = (performance.now() - started) / 1000;
-    if (!results.length) {
-      setSweepStatus('Sweep did not produce results.');
-      setSweepHoverText('Hover point: -');
-      setSweepUiState(false);
-      return;
-    }
-
-    results.sort(function (a, b) {
-      return a.totalBadness - b.totalBadness;
-    });
-    sweepResults = results;
-    sweepCurrentPoint = null;
-    sweepBestCandidate = results[0];
-    if (sweepApplyBestBtn) sweepApplyBestBtn.disabled = false;
-    if (sweepBestAlphaVariant) sweepBestAlphaVariant.textContent = sweepBestCandidate.alphaVariant || 'current';
-    if (sweepBestKp) sweepBestKp.textContent = formatNum(sweepBestCandidate.kp, 4);
-    if (sweepBestKi) sweepBestKi.textContent = formatNum(sweepBestCandidate.ki, 4);
-    if (sweepBestImax) sweepBestImax.textContent = formatNum(sweepBestCandidate.iMax, 4);
-    if (sweepBestHealth) sweepBestHealth.textContent = formatNum(sweepBestCandidate.healthBadness, 6);
-    if (sweepBestUx) sweepBestUx.textContent = formatNum(sweepBestCandidate.uxBadness, 6);
-    if (sweepBestTotal) sweepBestTotal.textContent = formatNum(sweepBestCandidate.totalBadness, 6);
-    renderSweepScatter(sweepResults, sweepBestCandidate, sweepCurrentPoint, sweepScoredHistory);
-
-    if (sweepCancelRequested) {
-      setSweepStatus(
-        `Sweep canceled after ${results.length.toLocaleString()} candidates in ${formatNum(elapsedSec, 2)}s.`
-      );
-    } else {
-      setSweepStatus(
-        `Sweep complete: ${results.length.toLocaleString()} candidates in ${formatNum(elapsedSec, 2)}s.`
-      );
-    }
-    setSweepUiState(false);
-  }
-
-  function applySweepBestCandidate() {
-    if (!sweepBestCandidate) return;
-    if (feeMechanismInput) feeMechanismInput.value = 'taiko';
-    syncFeeMechanismUi();
-    if (sweepBestCandidate.alphaVariant === 'zero') {
-      autoAlphaInput.checked = false;
-      alphaGasInput.value = '0';
-      alphaBlobInput.value = '0';
-    } else if (Number.isFinite(sweepBestCandidate.alphaGas) && Number.isFinite(sweepBestCandidate.alphaBlob)) {
-      autoAlphaInput.checked = false;
-      alphaGasInput.value = `${sweepBestCandidate.alphaGas}`;
-      alphaBlobInput.value = `${sweepBestCandidate.alphaBlob}`;
-    }
-    kpInput.value = `${sweepBestCandidate.kp}`;
-    kiInput.value = `${sweepBestCandidate.ki}`;
-    kdInput.value = `${sweepBestCandidate.kd}`;
-    iMaxInput.value = `${sweepBestCandidate.iMax}`;
-    scheduleRecalc('Applied best params. Recomputing derived charts...');
   }
 
   if (!window.uPlot) {
@@ -3446,85 +2515,6 @@
     };
   }
 
-  function makeSweepOpts(width, height) {
-    return {
-      title: 'Sweep Tradeoff: Health vs UX (lower is better)',
-      width,
-      height,
-      scales: { x: {}, y: {} },
-      series: [
-        {
-          label: 'UX badness',
-          value: function (u, v) {
-            if (!Number.isFinite(v)) return '';
-            return formatNum(v, 6);
-          }
-        },
-        {
-          label: 'Candidates (Taiko coeff sweep)',
-          stroke: '#64748b',
-          width: 0,
-          points: { show: true, size: 4, stroke: '#64748b', fill: '#94a3b8' }
-        },
-        {
-          label: 'Best weighted score',
-          stroke: '#dc2626',
-          width: 0,
-          points: { show: true, size: 7, stroke: '#dc2626', fill: '#ef4444' }
-        },
-        {
-          label: 'Current settings (last recompute)',
-          stroke: '#0284c7',
-          width: 0,
-          points: { show: true, size: 7, stroke: '#0284c7', fill: '#38bdf8' }
-        },
-        {
-          label: 'Scored points (history)',
-          stroke: '#a16207',
-          width: 0,
-          points: { show: true, size: 6, stroke: '#a16207', fill: '#fde68a' }
-        },
-        {
-          label: 'Scored point (latest)',
-          stroke: '#ca8a04',
-          width: 0,
-          points: { show: true, size: 8, stroke: '#ca8a04', fill: '#facc15' }
-        },
-        {
-          label: 'Origin (0,0)',
-          stroke: '#111827',
-          width: 0,
-          points: { show: true, size: 8, stroke: '#111827', fill: '#ffffff' }
-        }
-      ],
-      axes: [
-        {
-          label: 'UX badness',
-          values: function (u, vals) {
-            return vals.map(function (v) {
-              if (!Number.isFinite(v)) return '';
-              const av = Math.abs(v);
-              if (av > 0 && av < 0.001) return formatNum(v, 6);
-              return formatNum(v, 4);
-            });
-          }
-        },
-        {
-          label: 'Health badness',
-          values: function (u, vals) {
-            return vals.map(function (v) { return formatNum(v, 4); });
-          }
-        }
-      ],
-      cursor: {
-        drag: { x: false, y: false, setScale: false }
-      },
-      hooks: {
-        setCursor: [onSetSweepCursor]
-      }
-    };
-  }
-
   function applyRange(minVal, maxVal, sourcePlot) {
     if (!datasetReady || !blocks.length) return;
     const prevRange = activeDatasetId && Array.isArray(datasetRangeById[activeDatasetId])
@@ -3547,8 +2537,6 @@
     }
     syncing = false;
     if (rangeChanged) rerunSavedRunsForCurrentRange();
-    if (rangeChanged) resetSweepState('range changed');
-    markScoreStale('range changed');
     refreshRangePresetSelection();
     refreshComparisonPlots();
   }
@@ -3558,14 +2546,9 @@
     for (const p of allPlots()) {
       p.setSize({ width, height: 320 });
     }
-    if (sweepPlot) {
-      const sweepSize = Math.min(width, 560);
-      sweepPlot.setSize({ width: sweepSize, height: sweepSize });
-    }
   }
 
   const width = Math.max(480, baseWrap.clientWidth - 8);
-  const sweepSize = Math.min(width, 560);
 
   basePlot = new uPlot(
     makeOpts('L1 Base Fee', 'gwei', '#1d4ed8', width, 320),
@@ -3648,15 +2631,6 @@
     vaultWrap
   );
 
-  sweepPlot = new uPlot(
-    makeSweepOpts(sweepSize, sweepSize),
-    [[], [], [], [], [], [], []],
-    sweepWrap
-  );
-
-  setSweepUiState(false);
-  setSweepStatus('Sweep idle. PID+FF-only coefficient sweep: Kp/Ki/Imax with Kd fixed at 0 and alpha variants (current, zero).');
-  setSweepHoverText('Hover point: -');
   minInput.value = '';
   maxInput.value = '';
   if (rangeText) rangeText.textContent = 'Loading dataset...';
@@ -3764,28 +2738,6 @@
     refreshComparisonPlots();
   });
 
-  scoreBtn.addEventListener('click', function () {
-    if (scoreStatus) scoreStatus.textContent = 'Scoring current range...';
-    setUiBusy(true);
-    window.setTimeout(function () {
-      try {
-        scoreCurrentRangeNow();
-      } finally {
-        setUiBusy(false);
-      }
-    }, 0);
-  });
-
-  function setScoreHelpOpen(isOpen) {
-    if (isOpen) {
-      scoreHelpModal.classList.add('open');
-      scoreHelpModal.setAttribute('aria-hidden', 'false');
-    } else {
-      scoreHelpModal.classList.remove('open');
-      scoreHelpModal.setAttribute('aria-hidden', 'true');
-    }
-  }
-
   function setControllerHelpOpen(isOpen) {
     if (isOpen) {
       controllerHelpModal.classList.add('open');
@@ -3807,35 +2759,9 @@
       setControllerHelpOpen(false);
     }
   });
-  scoreHelpBtn.addEventListener('click', function () {
-    setScoreHelpOpen(true);
-  });
-  scoreHelpClose.addEventListener('click', function () {
-    setScoreHelpOpen(false);
-  });
-  scoreHelpModal.addEventListener('click', function (e) {
-    if (e.target === scoreHelpModal) {
-      setScoreHelpOpen(false);
-    }
-  });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (controllerHelpModal.classList.contains('open')) setControllerHelpOpen(false);
-    if (scoreHelpModal.classList.contains('open')) setScoreHelpOpen(false);
-  });
-
-  sweepBtn.addEventListener('click', function () {
-    runParameterSweep();
-  });
-
-  sweepCancelBtn.addEventListener('click', function () {
-    if (!sweepRunning) return;
-    sweepCancelRequested = true;
-    setSweepStatus('Cancel requested. Finishing current candidate...');
-  });
-
-  sweepApplyBestBtn.addEventListener('click', function () {
-    applySweepBestCandidate();
   });
 
   feeMechanismInput.addEventListener('change', function () {
@@ -3935,32 +2861,6 @@
     });
   });
 
-  [
-    deficitDeadbandPctInput,
-    scoreWeightHealthInput,
-    scoreWeightUxInput,
-    healthWDrawInput,
-    healthWUnderInput,
-    healthWAreaInput,
-    healthWStreakInput,
-    healthWPostBEInput,
-    uxWStdInput,
-    uxWP95Input,
-    uxWP99Input,
-    uxWMaxStepInput,
-    uxWClampInput,
-    uxWLevelInput
-  ].forEach(function (el) {
-    el.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        markScoreStale('score settings changed');
-      }
-    });
-    el.addEventListener('change', function () {
-      markScoreStale('score settings changed');
-    });
-  });
-
   let resizeTimer;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);
@@ -4005,7 +2905,6 @@
   async function initApp() {
     savedRunManager.loadFromStorage();
     await importSharedRunsFromHashIfPresent();
-    markScoreStale('not computed yet');
     renderSavedRunsList();
     syncCurrentRunButtonLabel();
     syncFeeMechanismUi();

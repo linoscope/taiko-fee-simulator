@@ -55,16 +55,6 @@ test.describe('fee_history_interactive visual regression', () => {
     });
   });
 
-  test('current365 scored state', async ({ page }) => {
-    await openSimulator(page, 'current365', 'Current 365d');
-    await page.click('#scoreBtn');
-    await expect(page.locator('#busyOverlay')).toBeHidden({ timeout: 30_000 });
-    await expect(page.locator('#scoreTotalBadness')).not.toHaveText('-', { timeout: 30_000 });
-    await expect(page).toHaveScreenshot('fee-history-current365-scored.png', {
-      mask: screenshotMasks(page),
-    });
-  });
-
   test('save current run for taiko p-only and eip1559', async ({ page }) => {
     await openSimulator(page, 'current365', 'Current 365d');
 

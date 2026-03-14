@@ -230,32 +230,6 @@
       background: #ffffff;
       cursor: pointer;
     }
-    .score-kpis {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      margin: 8px 0;
-    }
-    .score-kpi {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #ffffff;
-      padding: 8px;
-    }
-    .score-kpi-label { font-size: 11px; color: var(--muted); }
-    .score-kpi-value { font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 4px; line-height: 1.1; }
-    .score-status {
-      margin: 6px 0;
-      font-size: 12px;
-      color: #475569;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-    .sweep-status-line {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 6px 0;
-    }
     .spinner {
       width: 12px;
       height: 12px;
@@ -302,12 +276,6 @@
       border-radius: 50%;
       animation: spin 0.9s linear infinite;
       flex: 0 0 24px;
-    }
-    .score-subtitle {
-      font-size: 12px;
-      color: #334155;
-      margin: 8px 0 4px;
-      font-weight: 600;
     }
     .help-modal {
       position: fixed;
@@ -568,85 +536,6 @@
           </details>
         </div>
 
-        <div class="assumptions score-card" id="scoreCard">
-          <div class="title-row">
-            <div class="assumptions-title">Health / UX Scoring</div>
-            <button id="scoreHelpBtn" class="help-btn" type="button" title="Explain scoring">?</button>
-          </div>
-          <div class="controls">
-            <label>Deficit deadband (%) <input id="deficitDeadbandPct" type="number" min="0" step="0.1" value="5" /></label>
-            <label>Overall health weight <input id="scoreWeightHealth" type="number" min="0" step="0.01" value="0.75" /></label>
-            <label>Overall UX weight <input id="scoreWeightUx" type="number" min="0" step="0.01" value="0.25" /></label>
-            <button class="primary" id="scoreBtn">Score current range</button>
-          </div>
-          <div class="score-status" id="scoreStatus">Score is stale. Click "Score current range" to compute.</div>
-          <div class="score-kpis">
-            <div class="score-kpi"><div class="score-kpi-label">TOTAL BADNESS</div><div class="score-kpi-value" id="scoreTotalBadness">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">HEALTH BADNESS</div><div class="score-kpi-value" id="scoreHealthBadness">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">UX BADNESS</div><div class="score-kpi-value" id="scoreUxBadness">-</div></div>
-          </div>
-          <div class="score-subtitle">Important Health Metrics</div>
-          <div class="score-kpis">
-            <div class="score-kpi"><div class="score-kpi-label">Max drawdown</div><div class="score-kpi-value" id="healthMaxDrawdown">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Below-deadband ratio</div><div class="score-kpi-value" id="healthUnderTargetRatio">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Post break-even ratio</div><div class="score-kpi-value" id="healthPostBreakEvenRatio">-</div></div>
-          </div>
-          <div class="score-subtitle">Important UX Metrics</div>
-          <div class="score-kpis">
-            <div class="score-kpi"><div class="score-kpi-label">Fee std</div><div class="score-kpi-value" id="uxFeeStd">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Fee step p95</div><div class="score-kpi-value" id="uxFeeStepP95">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Fee premium vs break-even (mean)</div><div class="score-kpi-value" id="uxFeeLevelMean">-</div></div>
-            <div class="score-kpi"><div class="score-kpi-label">Clamp-max ratio</div><div class="score-kpi-value" id="uxClampMaxRatio">-</div></div>
-          </div>
-          <div class="assumptions-title">Score Weights (Detailed)</div>
-          <div class="controls">
-            <label>Health w_draw <input id="healthWDraw" type="number" min="0" step="0.01" value="0.35" /></label>
-            <label>Health w_under <input id="healthWUnder" type="number" min="0" step="0.01" value="0.25" /></label>
-            <label>Health w_area <input id="healthWArea" type="number" min="0" step="0.01" value="0.2" /></label>
-            <label>Health w_streak <input id="healthWStreak" type="number" min="0" step="0.01" value="0.1" /></label>
-            <label>Health w_postBE <input id="healthWPostBE" type="number" min="0" step="0.01" value="0.2" /></label>
-            <label>UX w_std <input id="uxWStd" type="number" min="0" step="0.01" value="0.2" /></label>
-            <label>UX w_p95 <input id="uxWP95" type="number" min="0" step="0.01" value="0.2" /></label>
-            <label>UX w_p99 <input id="uxWP99" type="number" min="0" step="0.01" value="0.1" /></label>
-            <label>UX w_maxStep <input id="uxWMaxStep" type="number" min="0" step="0.01" value="0.05" /></label>
-            <label>UX w_clamp <input id="uxWClamp" type="number" min="0" step="0.01" value="0.05" /></label>
-            <label>UX w_level <input id="uxWLevel" type="number" min="0" step="0.01" value="0.4" /></label>
-          </div>
-          <div class="formula" id="scoreWeightSummary">overall weights: -</div>
-          <div class="formula" id="healthFormulaLine">health_badness = -</div>
-          <div class="formula" id="uxFormulaLine">ux_badness = -</div>
-          <div class="formula" id="totalFormulaLine">total_badness = -</div>
-          <div class="metrics">
-            <span>Health deficit area (banded): <strong id="healthDeficitAreaBand">-</strong></span>
-            <span>Health worst deficit streak: <strong id="healthWorstDeficitStreak">-</strong></span>
-            <span>UX fee step p99: <strong id="uxFeeStepP99">-</strong></span>
-            <span>UX fee step max: <strong id="uxFeeStepMax">-</strong></span>
-          </div>
-          <div class="assumptions-title">Parameter Sweep</div>
-          <div class="formula">PID+FF-only coefficient sweep over alpha variant (current/zero), Kp, Ki, and I max (Kd fixed at 0).</div>
-          <div class="controls">
-            <button class="primary" id="sweepBtn">Run parameter sweep</button>
-            <button id="sweepCancelBtn" disabled>Cancel sweep</button>
-            <button id="sweepApplyBestBtn" disabled>Apply best params</button>
-          </div>
-          <div class="sweep-status-line">
-            <span class="spinner" id="sweepSpinner"></span>
-            <div class="score-status" id="sweepStatus">Sweep idle.</div>
-          </div>
-          <div class="metrics">
-            <span>Sweep size: <strong id="sweepCandidateCount">-</strong></span>
-            <span>Range size: <strong id="sweepRangeCount">-</strong></span>
-            <span>Best alpha: <strong id="sweepBestAlphaVariant">-</strong></span>
-            <span>Best Kp: <strong id="sweepBestKp">-</strong></span>
-            <span>Best Ki: <strong id="sweepBestKi">-</strong></span>
-            <span>Best I max: <strong id="sweepBestImax">-</strong></span>
-            <span>Best health badness: <strong id="sweepBestHealth">-</strong></span>
-            <span>Best UX badness: <strong id="sweepBestUx">-</strong></span>
-            <span>Best total badness: <strong id="sweepBestTotal">-</strong></span>
-          </div>
-          <div class="formula" id="sweepHover">Hover point: -</div>
-        </div>
-
         <div class="status-line">
           <span class="spinner" id="busySpinner"></span>
           <div class="status" id="status"></div>
@@ -664,7 +553,6 @@
         <div id="feedbackPlot" class="plot"></div>
         <div id="chargedFeeOnlyPlot" class="plot"></div>
         <div id="vaultPlot" class="plot"></div>
-        <div id="sweepPlot" class="plot"></div>
       </main>
     </div>
   </div>
@@ -693,36 +581,6 @@
           <li>L2 gas scenarios are mean-neutralized around demand-adjusted throughput target</li>
           <li>Posting happens when <code>(i + 1) % postEveryBlocks == 0</code>; revenue settles to vault at post time</li>
         </ul>
-      </div>
-    </div>
-  </div>
-
-  <div id="scoreHelpModal" class="help-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="scoreHelpTitle">
-    <div class="help-card">
-      <div class="help-head">
-        <h2 id="scoreHelpTitle" class="help-title">How Scoring Works</h2>
-        <button id="scoreHelpClose" class="help-close" type="button" title="Close">x</button>
-      </div>
-      <div class="help-body">
-        <p><strong>Goal:</strong> compare controller settings over the selected block range. Lower score is better.</p>
-        <p><code>total_badness = weighted_mean(health_badness, ux_badness)</code></p>
-        <p><code>health_badness = weighted_mean(dDraw, dUnder, dArea, dStreak, dPost)</code></p>
-        <ul>
-          <li><code>dDraw</code>: max under-target gap, normalized by target vault</li>
-          <li><code>dUnder</code>: fraction of blocks with vault below deadband floor</li>
-          <li><code>dArea</code>: deadbanded deficit area, normalized by target and range length</li>
-          <li><code>dStreak</code>: longest consecutive below-deadband run, normalized by range length</li>
-          <li><code>dPost</code>: fraction of posting events that do not break even</li>
-        </ul>
-        <p><code>ux_badness = weighted_mean(uStd, uP95, uP99, uMax, uClamp, uLevel)</code></p>
-        <ul>
-          <li><code>uStd</code>: fee standard deviation, normalized by max fee</li>
-          <li><code>uP95</code>/<code>uP99</code>: p95/p99 absolute fee step size, normalized by max fee</li>
-          <li><code>uMax</code>: max absolute fee step, normalized by max fee</li>
-          <li><code>uClamp</code>: fraction of blocks clamped at max fee</li>
-          <li><code>uLevel</code>: average premium above break-even fee, normalized by break-even mean</li>
-        </ul>
-        <p>Use the weight inputs to emphasize protocol health vs user UX, then click <strong>Score current range</strong>.</p>
       </div>
     </div>
   </div>
