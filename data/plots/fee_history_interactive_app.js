@@ -3337,7 +3337,7 @@
       });
     }
     return {
-      title: 'L2 Charged Fee (clamped total only)',
+      title: 'L2 Charged Fee',
       width,
       height,
       scales: { x: { time: false } },

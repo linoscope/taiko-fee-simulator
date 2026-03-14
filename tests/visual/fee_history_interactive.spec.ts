@@ -116,7 +116,7 @@ test.describe('fee_history_interactive visual regression', () => {
     await page.evaluate(() => {
       const sidebar = document.querySelector('.sidebar');
       if (sidebar) sidebar.scrollTop = 0;
-      const plot = document.getElementById('requiredFeePlot');
+      const plot = document.getElementById('chargedFeeOnlyPlot');
       if (!plot) return;
       const top = plot.getBoundingClientRect().top + window.scrollY - 12;
       window.scrollTo(0, Math.max(0, top));
