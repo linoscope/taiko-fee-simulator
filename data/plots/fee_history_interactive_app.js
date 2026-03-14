@@ -18,7 +18,8 @@
   const DEFAULT_ARB_EQUIL_UNITS = 96000000;
   const TPS_PRESETS = Object.freeze([0.5, 1, 2, 5, 10, 20, 50, 100, 200]);
   const DEMAND_MULTIPLIERS = Object.freeze({ low: 0.7, base: 1.0, high: 1.4 });
-  const DOTTED_SAVED_RUN_OPACITY = 0.6;
+  const DEFAULT_SAVED_RUN_OPACITY = 1.0;
+  const SAVED_RUN_OPACITY_OPTIONS = Object.freeze([0.2, 0.4, 0.6, 0.8, 1.0]);
   const MAX_SAVED_RUNS = 6;
   const SAVED_RUNS_STORAGE_KEY = 'fee_history_interactive_saved_runs_v1';
   const SHARED_RUNS_HASH_KEY = 'sharedRuns';
@@ -1231,10 +1232,15 @@
     const lastRecomputedAtNum = Number(runLike.lastRecomputedAt);
     const tpsNum = Number(runLike.tps);
 
+    const opacityNum = Number(runLike.opacity);
+    const opacity = Number.isFinite(opacityNum) && opacityNum > 0 && opacityNum <= 1
+      ? opacityNum : DEFAULT_SAVED_RUN_OPACITY;
+
     return {
       id,
       visible: runLike.visible !== false,
       solidLine: runLike.solidLine === true,
+      opacity,
       color: normalizeSavedRunColor(runLike.color, fallbackIndex),
       name: normalizeRunName(runLike.name),
       datasetId: runLike.datasetId == null ? '' : String(runLike.datasetId),
@@ -1263,6 +1269,7 @@
               id: run.id,
               visible: run.visible !== false,
               solidLine: run.solidLine === true,
+              opacity: run.opacity,
               color: normalizeSavedRunColor(run.color, idx),
               name: normalizeRunName(run.name),
               datasetId: run.datasetId == null ? '' : String(run.datasetId),
@@ -1401,6 +1408,7 @@
             name: normalizeRunName(run.name),
             visible: run.visible !== false,
             solidLine: run.solidLine === true,
+            opacity: run.opacity,
             color: normalizeSavedRunColor(run.color, idx),
             datasetId: run.datasetId == null ? '' : String(run.datasetId),
             minBlock: run.minBlock,
@@ -1425,6 +1433,7 @@
           id: imported.length + 1,
           visible: raw && raw.visible !== false,
           solidLine: Boolean(raw && raw.solidLine),
+          opacity: raw ? raw.opacity : DEFAULT_SAVED_RUN_OPACITY,
           color: raw ? raw.color : '',
           name: raw ? raw.name : '',
           datasetId: raw ? raw.datasetId : '',
@@ -1654,14 +1663,15 @@
         let label = `Saved run ${i + 1} ${metricLabel}`;
         let dash = [6, 4];
         let width = 1.1;
-        let stroke = withAlpha(baseColor, DOTTED_SAVED_RUN_OPACITY);
+        let stroke = withAlpha(baseColor, DEFAULT_SAVED_RUN_OPACITY);
         let show = false;
         if (run) {
           const name = runDisplayName(run, i);
           label = `${name} ${metricLabel}`;
           dash = run.solidLine ? [] : [6, 4];
           width = run.solidLine ? 1.4 : 1.1;
-          stroke = run.solidLine ? baseColor : withAlpha(baseColor, DOTTED_SAVED_RUN_OPACITY);
+          const runOpacity = Number.isFinite(run.opacity) ? run.opacity : DEFAULT_SAVED_RUN_OPACITY;
+          stroke = runOpacity >= 1 ? baseColor : withAlpha(baseColor, runOpacity);
           show = Boolean(run.visible && runMatchesCurrentView(run));
         }
 
@@ -1743,6 +1753,7 @@
             <span>TPS ${tpsText}</span>
             <label><input type="checkbox" data-action="toggle" data-run-id="${run.id}" ${run.visible ? 'checked' : ''}/> show</label>
             <label><input type="checkbox" data-action="lineStyle" data-run-id="${run.id}" ${run.solidLine ? 'checked' : ''}/> solid line</label>
+            <label>opacity <select data-action="opacity" data-run-id="${run.id}">${SAVED_RUN_OPACITY_OPTIONS.map(function (v) { return '<option value="' + v + '"' + (v === run.opacity ? ' selected' : '') + '>' + (v * 100) + '%</option>'; }).join('')}</select></label>
             <label>color <input class="saved-run-color-input" type="color" data-action="color" data-run-id="${run.id}" value="${slotColor}" aria-label="Saved run color for ${htmlEscape(displayName)}" /></label>
             <label>name <input class="saved-run-name" type="text" data-action="name" data-run-id="${run.id}" value="${htmlEscape(rawName)}" placeholder="Run #${run.id}" /></label>
             <button data-action="delete" data-run-id="${run.id}">Delete</button>
@@ -1813,6 +1824,7 @@
     const run = {
       visible: true,
       solidLine: false,
+      opacity: DEFAULT_SAVED_RUN_OPACITY,
       name: '',
       datasetId: snap.datasetId,
       minBlock: rangeInfo ? rangeInfo.minB : snap.minBlock,
@@ -2721,6 +2733,11 @@
     } else if (action === 'lineStyle') {
       changed = savedRunManager.updateRunById(runId, function (run) {
         run.solidLine = Boolean(target.checked);
+      });
+    } else if (action === 'opacity') {
+      changed = savedRunManager.updateRunById(runId, function (run) {
+        const v = Number(target.value);
+        run.opacity = Number.isFinite(v) && v > 0 && v <= 1 ? v : DEFAULT_SAVED_RUN_OPACITY;
       });
     } else if (action === 'color') {
       changed = savedRunManager.updateRunById(runId, function (run, idx) {

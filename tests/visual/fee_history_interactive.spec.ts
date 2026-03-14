@@ -115,4 +115,69 @@ test.describe('fee_history_interactive visual regression', () => {
       mask: screenshotMasks(page, ['#savedRunsList .saved-run-meta']),
     });
   });
+
+  test('saved run opacity dropdown persists and affects chart', async ({ page }) => {
+    await openSimulator(page, 'current365', 'Current 365d');
+
+    // Save two runs with different mechanisms
+    await page.click('#saveRunBtn');
+    await expect(page.locator('#savedRunsStatus')).toHaveText('1 / 6 saved');
+
+    await page.selectOption('#feeMechanism', 'eip1559');
+    await recomputeDerivedCharts(page);
+    await page.click('#saveRunBtn');
+    await expect(page.locator('#savedRunsStatus')).toHaveText('2 / 6 saved');
+
+    // Both runs should default to 100% opacity
+    const firstOpacity = page.locator('select[data-action="opacity"]').first();
+    const secondOpacity = page.locator('select[data-action="opacity"]').nth(1);
+    await expect(firstOpacity).toHaveValue('1');
+    await expect(secondOpacity).toHaveValue('1');
+
+    // Change first run to 20%, second to 100%
+    await firstOpacity.selectOption('0.2');
+    await secondOpacity.selectOption('1');
+
+    // Verify dropdown reflects the change
+    await expect(firstOpacity).toHaveValue('0.2');
+    await expect(secondOpacity).toHaveValue('1');
+
+    // Verify localStorage persisted the opacity values
+    const payload = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('fee_history_interactive_saved_runs_v1') || '{}');
+    });
+    expect(payload.runs?.[0]?.opacity).toBe(0.2);
+    expect(payload.runs?.[1]?.opacity).toBe(1);
+
+    // Verify shared-runs links preserve opacity settings too.
+    await page.click('#shareRunsBtn');
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('sharedRuns=');
+    const sharedHash = await page.evaluate(() => window.location.hash);
+
+    await page.goto(`/fee_history_interactive.html?dataset=current365${sharedHash}`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await waitForSimulatorReady(page, 'Current 365d');
+    await page.addStyleTag({ content: STABILIZE_CSS });
+
+    const importedFirstOpacity = page.locator('select[data-action="opacity"]').first();
+    const importedSecondOpacity = page.locator('select[data-action="opacity"]').nth(1);
+    await expect(importedFirstOpacity).toHaveValue('0.2');
+    await expect(importedSecondOpacity).toHaveValue('1');
+
+    // Screenshot the charged fee chart to capture different opacity rendering
+    await page.evaluate(() => {
+      const sidebar = document.querySelector('.sidebar');
+      if (sidebar) sidebar.scrollTop = 0;
+      const plot = document.getElementById('chargedFeeOnlyPlot');
+      if (!plot) return;
+      const top = plot.getBoundingClientRect().top + window.scrollY - 12;
+      window.scrollTo(0, Math.max(0, top));
+    });
+    await expect(page).toHaveScreenshot('fee-history-saved-runs-opacity-20-and-100.png', {
+      mask: screenshotMasks(page, ['#savedRunsList .saved-run-meta']),
+    });
+  });
 });
