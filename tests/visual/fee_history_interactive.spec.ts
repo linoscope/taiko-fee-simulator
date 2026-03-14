@@ -38,6 +38,11 @@ async function recomputeDerivedCharts(page: Page) {
   await expect(page.locator('#paramsDirtyHint')).toHaveText(/^\s*$/);
 }
 
+async function waitForDerivedChartsIdle(page: Page) {
+  await expect(page.locator('#busyOverlay')).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator('#paramsDirtyHint')).toHaveText(/^\s*$/);
+}
+
 test.describe('fee_history_interactive visual regression', () => {
   test('current365 default view', async ({ page }) => {
     await openSimulator(page, 'current365', 'Current 365d');
@@ -179,5 +184,43 @@ test.describe('fee_history_interactive visual regression', () => {
     await expect(page).toHaveScreenshot('fee-history-saved-runs-opacity-20-and-100.png', {
       mask: screenshotMasks(page, ['#savedRunsList .saved-run-meta']),
     });
+  });
+
+  test('saved run can load into controls and be replaced from current run', async ({ page }) => {
+    await openSimulator(page, 'current365', 'Current 365d');
+
+    await page.click('#saveRunBtn');
+    await expect(page.locator('#savedRunsStatus')).toHaveText('1 / 6 saved');
+
+    await page.selectOption('#feeMechanism', 'eip1559');
+    await page.fill('#eip1559Denominator', '16');
+    await page.fill('#l1GasUsed', '150000');
+    await recomputeDerivedCharts(page);
+
+    await page.click('button[data-action="load"]');
+    await waitForDerivedChartsIdle(page);
+
+    await expect(page.locator('#feeMechanism')).toHaveValue('taiko');
+    await expect(page.locator('#kp')).toHaveValue('10');
+    await expect(page.locator('#l1GasUsed')).toHaveValue('100000');
+
+    await page.selectOption('#feeMechanism', 'eip1559');
+    await page.fill('#eip1559Denominator', '12');
+    await page.fill('#l1GasUsed', '175000');
+    await recomputeDerivedCharts(page);
+
+    await page.click('button[data-action="replace"]');
+    await waitForDerivedChartsIdle(page);
+
+    await expect(page.locator('#savedRunsList')).toContainText('"feeMechanism": "eip1559"');
+    await expect(page.locator('#savedRunsList')).toContainText('"maxChangeDenominator": 12');
+    await expect(page.locator('#savedRunsList')).toContainText('"l1GasUsed": 175000');
+
+    const payload = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('fee_history_interactive_saved_runs_v1') || '{}');
+    });
+    expect(payload.runs?.[0]?.params?.feeMechanism).toBe('eip1559');
+    expect(payload.runs?.[0]?.params?.eip1559?.maxChangeDenominator).toBe(12);
+    expect(payload.runs?.[0]?.params?.l1GasUsed).toBe(175000);
   });
 });

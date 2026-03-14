@@ -1170,6 +1170,74 @@
     return Math.max(0, computeTpsFromGasAndBlockTime());
   }
 
+  function setTextInputValue(input, value) {
+    if (!input) return;
+    input.value = value == null ? '' : String(value);
+  }
+
+  function setCheckboxValue(input, checked) {
+    if (!input) return;
+    input.checked = Boolean(checked);
+  }
+
+  function setSelectValue(input, value, fallbackValue) {
+    if (!input) return;
+    const nextValue = value == null ? '' : String(value);
+    input.value = nextValue;
+    if (input.value !== nextValue && fallbackValue != null) {
+      input.value = String(fallbackValue);
+    }
+  }
+
+  function loadRunParamsIntoControls(rawParams) {
+    const runParams = normalizeRunParams(rawParams);
+
+    setTextInputValue(postEveryBlocksInput, runParams.postEveryBlocks);
+    setTextInputValue(l2GasPerL2BlockInput, runParams.l2GasPerL2Block);
+    setTextInputValue(l2BlockTimeSecInput, runParams.l2BlockTimeSec);
+    setSelectValue(l2GasScenarioInput, runParams.l2GasScenario, 'normal');
+    setSelectValue(l2DemandRegimeInput, runParams.l2DemandRegime, 'base');
+
+    setTextInputValue(l1GasUsedInput, runParams.l1GasUsed);
+    setSelectValue(blobModeInput, runParams.blobMode, DEFAULT_BLOB_MODE);
+    setTextInputValue(numBlobsInput, runParams.fixedNumBlobs);
+    setTextInputValue(txGasInput, runParams.blobModel.txGas);
+    setTextInputValue(txBytesInput, runParams.blobModel.txBytes);
+    setTextInputValue(batchOverheadBytesInput, runParams.blobModel.batchOverheadBytes);
+    setTextInputValue(compressionRatioInput, runParams.blobModel.compressionRatio);
+    setTextInputValue(blobUtilizationInput, runParams.blobModel.blobUtilization);
+    setTextInputValue(minBlobsPerProposalInput, runParams.blobModel.minBlobsPerProposal);
+    setTextInputValue(priorityFeeGweiInput, runParams.priorityFeeGwei);
+
+    setSelectValue(feeMechanismInput, runParams.feeMechanism, DEFAULT_FEE_MECHANISM);
+    setCheckboxValue(autoAlphaInput, runParams.autoAlphaEnabled);
+    setTextInputValue(alphaGasInput, runParams.alphaGas);
+    setTextInputValue(alphaBlobInput, runParams.alphaBlob);
+    setTextInputValue(kpInput, runParams.kp);
+    setTextInputValue(pMinGweiInput, runParams.pTermMinGwei);
+    setTextInputValue(kiInput, runParams.ki);
+    setTextInputValue(kdInput, runParams.kd);
+    setTextInputValue(iMinInput, runParams.iMin);
+    setTextInputValue(iMaxInput, runParams.iMax);
+    setTextInputValue(dffBlocksInput, runParams.dffBlocks);
+    setTextInputValue(dfbBlocksInput, runParams.dfbBlocks);
+    setTextInputValue(dSmoothBetaInput, runParams.derivBeta);
+    setTextInputValue(eip1559DenominatorInput, runParams.eip1559.maxChangeDenominator);
+    setTextInputValue(arbInitialPriceGweiInput, runParams.arbitrum.initialPriceGwei);
+    setTextInputValue(arbInertiaInput, runParams.arbitrum.inertia);
+    setTextInputValue(arbEquilUnitsInput, runParams.arbitrum.equilUnits);
+    setTextInputValue(minFeeGweiInput, runParams.minFeeGwei);
+    setTextInputValue(maxFeeGweiInput, runParams.maxFeeGwei);
+    setTextInputValue(initialVaultEthInput, runParams.initialVaultEth);
+    setTextInputValue(targetVaultEthInput, runParams.targetVaultEth);
+
+    syncFeeMechanismUi();
+    syncBlobModeUi();
+    syncTpsFromL2Gas();
+    updateBlobEstimatePreview();
+    return runParams;
+  }
+
   function currentRangeIndices() {
     if (!datasetReady || !blocks.length) return null;
     const [minB, maxB] = clampRange(minInput.value, maxInput.value);
@@ -1478,6 +1546,17 @@
     toggleCurrentRunBtn.textContent = savedRunManager.getShowCurrentRun() ? 'Hide current run' : 'Show current run';
   }
 
+  function findSavedRunEntry(runId) {
+    const savedRuns = savedRunManager.getRuns();
+    for (let i = 0; i < savedRuns.length; i++) {
+      const run = savedRuns[i];
+      if (run && run.id === runId) {
+        return { run, index: i };
+      }
+    }
+    return null;
+  }
+
   function runMatchesCurrentView(run) {
     if (!datasetReady || !blocks.length) return false;
     if (!run || !run.series) return false;
@@ -1756,7 +1835,11 @@
             <label>opacity <select data-action="opacity" data-run-id="${run.id}">${SAVED_RUN_OPACITY_OPTIONS.map(function (v) { return '<option value="' + v + '"' + (v === run.opacity ? ' selected' : '') + '>' + (v * 100) + '%</option>'; }).join('')}</select></label>
             <label>color <input class="saved-run-color-input" type="color" data-action="color" data-run-id="${run.id}" value="${slotColor}" aria-label="Saved run color for ${htmlEscape(displayName)}" /></label>
             <label>name <input class="saved-run-name" type="text" data-action="name" data-run-id="${run.id}" value="${htmlEscape(rawName)}" placeholder="Run #${run.id}" /></label>
-            <button data-action="delete" data-run-id="${run.id}">Delete</button>
+            <div class="saved-run-actions">
+              <button type="button" data-action="load" data-run-id="${run.id}">Load to controls</button>
+              <button type="button" data-action="replace" data-run-id="${run.id}">Replace with current</button>
+              <button type="button" data-action="delete" data-run-id="${run.id}">Delete</button>
+            </div>
           </div>
           <div class="saved-run-meta">
             ${htmlEscape(run.datasetId)} | blocks ${run.minBlock.toLocaleString()}-${run.maxBlock.toLocaleString()} | ${activeText} | recomputed ${recomputeText}
@@ -1785,6 +1868,103 @@
     setSavedRunsActionText('Cleared saved runs.');
   }
 
+  function buildSavedRunDraftFromCurrentSnapshot() {
+    if (paramsDirty) {
+      setStatus('Parameter changes pending. Click Recompute derived charts before saving.');
+      return null;
+    }
+
+    const snap = currentRunSnapshot;
+    const range = currentRangeSnapshot();
+    if (!snap || !range) {
+      setStatus('No computed run to save. Recompute first.');
+      return null;
+    }
+    if (
+      snap.datasetId !== activeDatasetId
+      || snap.minBlock !== range.minBlock
+      || snap.maxBlock !== range.maxBlock
+    ) {
+      setStatus('Current computed results do not match selected range. Recompute then save.');
+      return null;
+    }
+
+    const rangeInfo = currentRangeIndices();
+    const runParams = normalizeRunParams(snap.params);
+    const draft = {
+      datasetId: snap.datasetId,
+      minBlock: rangeInfo ? rangeInfo.minB : snap.minBlock,
+      maxBlock: rangeInfo ? rangeInfo.maxB : snap.maxBlock,
+      lastRecomputedAt: Date.now(),
+      tps: Number.isFinite(runParams.l2Tps) ? runParams.l2Tps : snap.tps,
+      params: runParams,
+      series: {
+        chargedFee: snap.series.chargedFee.slice(),
+        vault: snap.series.vault.slice(),
+      }
+    };
+    if (rangeInfo) {
+      draft.series = replaySavedRunForRange(draft, rangeInfo);
+    }
+    return draft;
+  }
+
+  async function loadSavedRunIntoControls(runId) {
+    const entry = findSavedRunEntry(runId);
+    if (!entry) return false;
+
+    const run = entry.run;
+    const displayName = runDisplayName(run, entry.index);
+    const targetMinBlock = Math.floor(Number(run.minBlock));
+    const targetMaxBlock = Math.floor(Number(run.maxBlock));
+    loadRunParamsIntoControls(run.params);
+
+    const targetDatasetId = run.datasetId && getDatasetMeta(run.datasetId)
+      ? String(run.datasetId)
+      : activeDatasetId;
+    if (targetDatasetId && targetDatasetId !== activeDatasetId) {
+      await activateDataset(targetDatasetId, false);
+    }
+
+    if (Number.isFinite(targetMinBlock) && Number.isFinite(targetMaxBlock)) {
+      applyRange(targetMinBlock, targetMaxBlock, null);
+    }
+
+    ensureCurrentRunVisible();
+    setSavedRunsActionText(`Loaded ${displayName} into main controls.`);
+    scheduleRecalc(`Loaded ${displayName} into main controls. Recomputing derived charts...`);
+    return true;
+  }
+
+  function replaceSavedRunWithCurrent(runId) {
+    const entry = findSavedRunEntry(runId);
+    if (!entry) return false;
+
+    const displayName = runDisplayName(entry.run, entry.index);
+    const draft = buildSavedRunDraftFromCurrentSnapshot();
+    if (!draft) return false;
+
+    const changed = savedRunManager.updateRunById(runId, function (run) {
+      run.datasetId = draft.datasetId;
+      run.minBlock = draft.minBlock;
+      run.maxBlock = draft.maxBlock;
+      run.lastRecomputedAt = draft.lastRecomputedAt;
+      run.tps = draft.tps;
+      run.params = draft.params;
+      run.series = {
+        chargedFee: draft.series.chargedFee.slice(),
+        vault: draft.series.vault.slice(),
+      };
+    });
+    if (!changed) return false;
+
+    renderSavedRunsList();
+    refreshComparisonPlots();
+    setSavedRunsActionText(`Updated ${displayName} from current controls.`);
+    setStatus(`Updated ${displayName} from current controls.`);
+    return true;
+  }
+
   function toggleCurrentRunView() {
     const showCurrentRun = savedRunManager.toggleShowCurrentRun();
     syncCurrentRunButtonLabel();
@@ -1805,41 +1985,25 @@
   }
 
   function saveCurrentRun() {
-    const snap = currentRunSnapshot;
-    const range = currentRangeSnapshot();
-    if (!snap || !range) {
-      setStatus('No computed run to save. Recompute first.');
-      return;
-    }
-    if (
-      snap.datasetId !== activeDatasetId
-      || snap.minBlock !== range.minBlock
-      || snap.maxBlock !== range.maxBlock
-    ) {
-      setStatus('Current computed results do not match selected range. Recompute then save.');
-      return;
-    }
+    const draft = buildSavedRunDraftFromCurrentSnapshot();
+    if (!draft) return;
 
-    const rangeInfo = currentRangeIndices();
     const run = {
       visible: true,
       solidLine: false,
       opacity: DEFAULT_SAVED_RUN_OPACITY,
       name: '',
-      datasetId: snap.datasetId,
-      minBlock: rangeInfo ? rangeInfo.minB : snap.minBlock,
-      maxBlock: rangeInfo ? rangeInfo.maxB : snap.maxBlock,
-      lastRecomputedAt: Date.now(),
-      tps: snap.tps,
-      params: snap.params,
+      datasetId: draft.datasetId,
+      minBlock: draft.minBlock,
+      maxBlock: draft.maxBlock,
+      lastRecomputedAt: draft.lastRecomputedAt,
+      tps: draft.tps,
+      params: draft.params,
       series: {
-        chargedFee: snap.series.chargedFee.slice(),
-        vault: snap.series.vault.slice(),
+        chargedFee: draft.series.chargedFee.slice(),
+        vault: draft.series.vault.slice(),
       }
     };
-    if (rangeInfo) {
-      run.series = replaySavedRunForRange(run, rangeInfo);
-    }
     const saved = savedRunManager.addRun(run);
     renderSavedRunsList();
     refreshComparisonPlots();
@@ -2713,10 +2877,29 @@
     const target = e.target;
     if (!(target instanceof Element)) return;
     const action = target.getAttribute('data-action');
-    if (action !== 'delete') return;
     const runId = Number(target.getAttribute('data-run-id'));
     if (!Number.isFinite(runId)) return;
-    deleteSavedRun(runId);
+    if (action === 'delete') {
+      deleteSavedRun(runId);
+      return;
+    }
+    if (action === 'load') {
+      runAsyncUiTask('Loading saved run into main controls...', async function () {
+        try {
+          await loadSavedRunIntoControls(runId);
+        } catch (err) {
+          const msg = err && err.message ? err.message : String(err);
+          setSavedRunsActionText('Failed to load saved run.');
+          setStatus(`Failed to load saved run: ${msg}`);
+        }
+      });
+      return;
+    }
+    if (action === 'replace') {
+      runBusyUiTask('Updating saved run from current controls...', function () {
+        replaceSavedRunWithCurrent(runId);
+      });
+    }
   });
 
   savedRunsList.addEventListener('change', function (e) {
