@@ -89,6 +89,12 @@ test.describe('fee_history_interactive visual regression', () => {
     await expect(page.locator('#savedRunsList .saved-run')).toHaveCount(2);
     await expect(page.locator('#savedRunsList')).toContainText('"feeMechanism": "eip1559"');
 
+    await page.click('#toggleCurrentRunBtn');
+    await expect(page.locator('#toggleCurrentRunBtn')).toHaveText('Show current run');
+
+    await recomputeDerivedCharts(page);
+    await expect(page.locator('#toggleCurrentRunBtn')).toHaveText('Hide current run');
+
     const firstColorInput = page.locator('#savedRunsList input[data-action="color"]').first();
     await firstColorInput.evaluate((el, value) => {
       const input = el as HTMLInputElement;
@@ -107,7 +113,14 @@ test.describe('fee_history_interactive visual regression', () => {
     });
     expect(savedRunsPayload.runs?.[0]?.color).toBe('#ef4444');
 
-    await page.locator('#chargedFeeOnlyPlot').scrollIntoViewIfNeeded();
+    await page.evaluate(() => {
+      const sidebar = document.querySelector('.sidebar');
+      if (sidebar) sidebar.scrollTop = 0;
+      const plot = document.getElementById('requiredFeePlot');
+      if (!plot) return;
+      const top = plot.getBoundingClientRect().top + window.scrollY - 12;
+      window.scrollTo(0, Math.max(0, top));
+    });
     await expect(page).toHaveScreenshot('fee-history-saved-runs-taiko-p-and-eip1559.png', {
       mask: screenshotMasks(page, ['#savedRunsList .saved-run-meta']),
     });

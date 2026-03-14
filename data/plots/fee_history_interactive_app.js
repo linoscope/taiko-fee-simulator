@@ -1678,6 +1678,14 @@
       return showCurrent;
     }
 
+    function setShowCurrentRun(nextShowCurrent) {
+      const next = nextShowCurrent !== false;
+      if (showCurrent === next) return false;
+      showCurrent = next;
+      persist();
+      return true;
+    }
+
     function updateRunById(runId, updateFn) {
       const index = runs.findIndex(function (r) { return r.id === runId; });
       if (index < 0) return false;
@@ -1795,6 +1803,7 @@
       hasRuns,
       getShowCurrentRun,
       toggleShowCurrentRun,
+      setShowCurrentRun,
       updateRunById,
       deleteRun,
       clear,
@@ -2124,6 +2133,14 @@
     } else {
       setStatus('Current run hidden. Showing saved runs only.');
     }
+  }
+
+  function ensureCurrentRunVisible() {
+    const changed = savedRunManager.setShowCurrentRun(true);
+    if (!changed) return false;
+    syncCurrentRunButtonLabel();
+    refreshComparisonPlots();
+    return true;
   }
 
   function saveCurrentRun() {
@@ -3670,6 +3687,7 @@
   });
 
   document.getElementById('recalcBtn').addEventListener('click', function () {
+    ensureCurrentRunVisible();
     scheduleRecalc('Recomputing derived charts...');
   });
 
