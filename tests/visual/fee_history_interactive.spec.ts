@@ -89,6 +89,24 @@ test.describe('fee_history_interactive visual regression', () => {
     await expect(page.locator('#savedRunsList .saved-run')).toHaveCount(2);
     await expect(page.locator('#savedRunsList')).toContainText('"feeMechanism": "eip1559"');
 
+    const firstColorInput = page.locator('#savedRunsList input[data-action="color"]').first();
+    await firstColorInput.evaluate((el, value) => {
+      const input = el as HTMLInputElement;
+      input.value = value as string;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, '#ef4444');
+
+    await expect(firstColorInput).toHaveValue('#ef4444');
+    await expect(page.locator('#savedRunsList .saved-run-swatch').first()).toHaveCSS(
+      'background-color',
+      'rgb(239, 68, 68)',
+    );
+
+    const savedRunsPayload = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('fee_history_interactive_saved_runs_v1') || '{}');
+    });
+    expect(savedRunsPayload.runs?.[0]?.color).toBe('#ef4444');
+
     await page.locator('#chargedFeeOnlyPlot').scrollIntoViewIfNeeded();
     await expect(page).toHaveScreenshot('fee-history-saved-runs-taiko-p-and-eip1559.png', {
       mask: screenshotMasks(page, ['#savedRunsList .saved-run-meta']),

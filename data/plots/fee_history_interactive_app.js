@@ -883,6 +883,26 @@
     return raw;
   }
 
+  function defaultSavedRunColor(index) {
+    const safeIndex = Math.max(0, Math.floor(Number(index) || 0));
+    return SAVED_RUN_COLORS[safeIndex % SAVED_RUN_COLORS.length];
+  }
+
+  function normalizeSavedRunColor(raw, fallbackIndex) {
+    const fallback = defaultSavedRunColor(fallbackIndex);
+    const value = String(raw || '').trim();
+    const hex6 = /^#([0-9a-f]{6})$/i.exec(value);
+    if (hex6) return `#${hex6[1].toLowerCase()}`;
+
+    const hex3 = /^#([0-9a-f]{3})$/i.exec(value);
+    if (hex3) {
+      const expanded = hex3[1].split('').map(function (ch) { return ch + ch; }).join('');
+      return `#${expanded.toLowerCase()}`;
+    }
+
+    return fallback;
+  }
+
   function currentBlobMode() {
     if (!blobModeInput) return DEFAULT_BLOB_MODE;
     return blobModeInput.value === 'dynamic' ? 'dynamic' : 'fixed';
@@ -1549,7 +1569,7 @@
     return `Run ${Number(fallbackIndex) + 1}`;
   }
 
-  function sanitizeSavedRun(runLike) {
+  function sanitizeSavedRun(runLike, fallbackIndex) {
     if (!runLike || typeof runLike !== 'object') return null;
     const id = Math.floor(Number(runLike.id));
     if (!Number.isFinite(id) || id <= 0) return null;
@@ -1565,6 +1585,7 @@
       id,
       visible: runLike.visible !== false,
       solidLine: runLike.solidLine === true,
+      color: normalizeSavedRunColor(runLike.color, fallbackIndex),
       name: normalizeRunName(runLike.name),
       datasetId: runLike.datasetId == null ? '' : String(runLike.datasetId),
       minBlock: Number.isFinite(minBlockNum) ? minBlockNum : 0,
@@ -1587,11 +1608,12 @@
         const payload = {
           savedRunSeq: seq,
           showCurrentRun: showCurrent,
-          runs: runs.map(function (run) {
+          runs: runs.map(function (run, idx) {
             return {
               id: run.id,
               visible: run.visible !== false,
               solidLine: run.solidLine === true,
+              color: normalizeSavedRunColor(run.color, idx),
               name: normalizeRunName(run.name),
               datasetId: run.datasetId == null ? '' : String(run.datasetId),
               minBlock: run.minBlock,
@@ -1623,7 +1645,7 @@
         let maxId = 0;
 
         for (const item of clippedRuns) {
-          const run = sanitizeSavedRun(item);
+          const run = sanitizeSavedRun(item, loadedRuns.length);
           if (!run) continue;
           loadedRuns.push(run);
           if (run.id > maxId) maxId = run.id;
@@ -1657,9 +1679,9 @@
     }
 
     function updateRunById(runId, updateFn) {
-      const run = runs.find(function (r) { return r.id === runId; });
-      if (!run) return false;
-      updateFn(run);
+      const index = runs.findIndex(function (r) { return r.id === runId; });
+      if (index < 0) return false;
+      updateFn(runs[index], index);
       persist();
       return true;
     }
@@ -1681,9 +1703,11 @@
 
     function addRun(run) {
       const nextId = ++seq;
+      const fallbackIndex = runs.length >= MAX_SAVED_RUNS ? (MAX_SAVED_RUNS - 1) : runs.length;
       const fullRun = {
         ...run,
         id: nextId,
+        color: normalizeSavedRunColor(run && run.color, fallbackIndex),
       };
       let evicted = null;
       if (runs.length >= MAX_SAVED_RUNS) {
@@ -1714,11 +1738,12 @@
     function exportShareState() {
       return {
         v: SHARED_RUNS_PAYLOAD_VERSION,
-        runs: runs.map(function (run) {
+        runs: runs.map(function (run, idx) {
           return {
             name: normalizeRunName(run.name),
             visible: run.visible !== false,
             solidLine: run.solidLine === true,
+            color: normalizeSavedRunColor(run.color, idx),
             datasetId: run.datasetId == null ? '' : String(run.datasetId),
             minBlock: run.minBlock,
             maxBlock: run.maxBlock,
@@ -1742,6 +1767,7 @@
           id: imported.length + 1,
           visible: raw && raw.visible !== false,
           solidLine: Boolean(raw && raw.solidLine),
+          color: raw ? raw.color : '',
           name: raw ? raw.name : '',
           datasetId: raw ? raw.datasetId : '',
           minBlock: raw ? raw.minBlock : 0,
@@ -1964,13 +1990,13 @@
       for (let i = 0; i < MAX_SAVED_RUNS; i++) {
         const slot = plot.series[startIndex + i];
         if (!slot) continue;
-        const baseColor = SAVED_RUN_COLORS[i % SAVED_RUN_COLORS.length];
+        const run = savedRuns[i];
+        const baseColor = normalizeSavedRunColor(run && run.color, i);
         let label = `Saved run ${i + 1} ${metricLabel}`;
         let dash = [6, 4];
         let width = 1.1;
         let stroke = withAlpha(baseColor, DOTTED_SAVED_RUN_OPACITY);
         let show = false;
-        const run = savedRuns[i];
         if (run) {
           const name = runDisplayName(run, i);
           label = `${name} ${metricLabel}`;
@@ -2049,7 +2075,7 @@
       const displayName = runDisplayName(run, idx);
       const rawName = normalizeRunName(run.name);
       const paramsJson = htmlEscape(JSON.stringify(run.params, null, 2));
-      const slotColor = SAVED_RUN_COLORS[idx % SAVED_RUN_COLORS.length];
+      const slotColor = normalizeSavedRunColor(run.color, idx);
       return `
         <div class="saved-run" data-run-id="${run.id}">
           <div class="saved-run-head">
@@ -2058,6 +2084,7 @@
             <span>TPS ${tpsText}</span>
             <label><input type="checkbox" data-action="toggle" data-run-id="${run.id}" ${run.visible ? 'checked' : ''}/> show</label>
             <label><input type="checkbox" data-action="lineStyle" data-run-id="${run.id}" ${run.solidLine ? 'checked' : ''}/> solid line</label>
+            <label>color <input class="saved-run-color-input" type="color" data-action="color" data-run-id="${run.id}" value="${slotColor}" aria-label="Saved run color for ${htmlEscape(displayName)}" /></label>
             <label>name <input class="saved-run-name" type="text" data-action="name" data-run-id="${run.id}" value="${htmlEscape(rawName)}" placeholder="Run #${run.id}" /></label>
             <button data-action="delete" data-run-id="${run.id}">Delete</button>
           </div>
@@ -3702,6 +3729,10 @@
     } else if (action === 'lineStyle') {
       changed = savedRunManager.updateRunById(runId, function (run) {
         run.solidLine = Boolean(target.checked);
+      });
+    } else if (action === 'color') {
+      changed = savedRunManager.updateRunById(runId, function (run, idx) {
+        run.color = normalizeSavedRunColor(target.value, idx);
       });
     } else if (action === 'name') {
       changed = savedRunManager.updateRunById(runId, function (run) {
