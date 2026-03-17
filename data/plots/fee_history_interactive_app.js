@@ -1786,6 +1786,16 @@
           slot._savedStrokeColor = stroke;
           needsRedraw = true;
         }
+        if (slot._savedPointColor !== stroke) {
+          slot.points = slot.points || {};
+          slot.points.stroke = function () { return stroke; };
+          slot.points.fill = function () { return stroke; };
+          // Keep cursor markers in sync immediately after redraw.
+          slot.points._stroke = stroke;
+          slot.points._fill = stroke;
+          slot._savedPointColor = stroke;
+          needsRedraw = true;
+        }
         if (slot.label !== label) slot.label = label;
         if (Boolean(slot.show !== false) !== show) slot.show = show;
 

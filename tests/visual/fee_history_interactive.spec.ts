@@ -186,6 +186,40 @@ test.describe('fee_history_interactive visual regression', () => {
     });
   });
 
+  test('saved run hover marker matches updated line color', async ({ page }) => {
+    await openSimulator(page, 'current365', 'Current 365d');
+
+    await page.click('#saveRunBtn');
+    await page.click('#saveRunBtn');
+    await page.click('#saveRunBtn');
+
+    const thirdColorInput = page.locator('#savedRunsList input[data-action="color"]').nth(2);
+    await thirdColorInput.evaluate((el, value) => {
+      const input = el as HTMLInputElement;
+      input.value = value as string;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, '#ff00aa');
+
+    await page.evaluate(() => {
+      const sidebar = document.querySelector('.sidebar');
+      if (sidebar) sidebar.scrollTop = 0;
+      const plot = document.getElementById('vaultPlot');
+      if (!plot) return;
+      const top = plot.getBoundingClientRect().top + window.scrollY - 12;
+      window.scrollTo(0, Math.max(0, top));
+    });
+
+    const hoverTarget = page.locator('#vaultPlot .u-over');
+    const box = await hoverTarget.boundingBox();
+    if (!box) throw new Error('Vault plot overlay not found');
+
+    await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.65);
+
+    const updatedMarker = page.locator('#vaultPlot .u-cursor-pt').nth(4);
+    await expect(updatedMarker).toHaveCSS('background-color', 'rgb(255, 0, 170)');
+    await expect(updatedMarker).toHaveCSS('border-color', 'rgb(255, 0, 170)');
+  });
+
   test('saved run can load into controls and be replaced from current run', async ({ page }) => {
     await openSimulator(page, 'current365', 'Current 365d');
 
