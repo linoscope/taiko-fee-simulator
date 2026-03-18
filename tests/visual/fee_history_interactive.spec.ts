@@ -249,6 +249,19 @@ test.describe('fee_history_interactive visual regression', () => {
     await expect(updatedLegendMarker).toHaveCSS('border-color', 'rgb(255, 0, 170)');
   });
 
+  test('save current run works after range preset change without recompute', async ({ page }) => {
+    await openSimulator(page, 'current365', 'Current 365d');
+
+    await page.selectOption('#rangePreset', 'blob_fee_spike_2025');
+    await waitForDerivedChartsIdle(page);
+
+    await page.click('#saveRunBtn');
+
+    await expect(page.locator('#savedRunsStatus')).toHaveText('1 / 6 saved');
+    await expect(page.locator('#savedRunsList .saved-run')).toHaveCount(1);
+    await expect(page.locator('#savedRunsList')).toContainText('blocks 22,317,791-22,350,959');
+  });
+
   test('saved run can load into controls and be replaced from current run', async ({ page }) => {
     await openSimulator(page, 'current365', 'Current 365d');
 

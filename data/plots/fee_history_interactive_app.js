@@ -2772,6 +2772,13 @@
       if (p !== sourcePlot) p.setScale('x', { min: minB, max: maxB });
     }
     syncing = false;
+    if (currentRunSnapshot && currentRunSnapshot.datasetId === activeDatasetId) {
+      currentRunSnapshot = {
+        ...currentRunSnapshot,
+        minBlock: minB,
+        maxBlock: maxB,
+      };
+    }
     if (rangeChanged) rerunSavedRunsForCurrentRange();
     refreshRangePresetSelection();
     refreshComparisonPlots();
