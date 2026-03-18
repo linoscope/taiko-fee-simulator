@@ -218,6 +218,9 @@ test.describe('fee_history_interactive visual regression', () => {
     const updatedMarker = page.locator('#vaultPlot .u-cursor-pt').nth(4);
     await expect(updatedMarker).toHaveCSS('background-color', 'rgb(255, 0, 170)');
     await expect(updatedMarker).toHaveCSS('border-color', 'rgb(255, 0, 170)');
+
+    const updatedLegendMarker = page.locator('#vaultPlot .u-legend .u-series .u-marker').nth(5);
+    await expect(updatedLegendMarker).toHaveCSS('border-color', 'rgb(255, 0, 170)');
   });
 
   test('saved run can load into controls and be replaced from current run', async ({ page }) => {

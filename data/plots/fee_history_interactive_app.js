@@ -1734,6 +1734,11 @@
           ? plot.root.querySelectorAll('.u-legend .u-series .u-label')
           : null
       );
+      const legendMarkers = (
+        plot.root && plot.root.querySelectorAll
+          ? plot.root.querySelectorAll('.u-legend .u-series .u-marker')
+          : null
+      );
       for (let i = 0; i < MAX_SAVED_RUNS; i++) {
         const slot = plot.series[startIndex + i];
         if (!slot) continue;
@@ -1804,6 +1809,10 @@
           if (el.textContent !== label) el.textContent = label;
           const row = el.closest('.u-series');
           if (row && row.style) row.style.display = show ? '' : 'none';
+        }
+        if (legendMarkers && legendMarkers[startIndex + i] && legendMarkers[startIndex + i].style) {
+          const marker = legendMarkers[startIndex + i];
+          marker.style.borderColor = stroke;
         }
       }
 
