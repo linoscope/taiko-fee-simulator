@@ -80,6 +80,13 @@
       "dataset_id": "current365",
       "min_block": 22291899,
       "max_block": 22351898
+    },
+    {
+      "id": "blob_fee_spike_2025",
+      "label": "2025 blob fee spike",
+      "dataset_id": "current365",
+      "min_block": 22317791,
+      "max_block": 22350959
     }
   ]
 }
