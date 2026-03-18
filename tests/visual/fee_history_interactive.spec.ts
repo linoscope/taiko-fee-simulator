@@ -60,6 +60,30 @@ test.describe('fee_history_interactive visual regression', () => {
     });
   });
 
+  test('legend value row is hidden until plot hover', async ({ page }) => {
+    await openSimulator(page, 'current365', 'Current 365d');
+
+    await page.evaluate(() => {
+      const plot = document.getElementById('chargedFeeOnlyPlot');
+      if (!plot) return;
+      const top = plot.getBoundingClientRect().top + window.scrollY - 12;
+      window.scrollTo(0, Math.max(0, top));
+    });
+
+    const valueRow = page.locator('#chargedFeeOnlyPlot .u-legend .u-series').first();
+    await expect(valueRow).toBeHidden();
+    const seriesValue = page.locator('#chargedFeeOnlyPlot .u-legend .u-series .u-value').nth(1);
+    await expect(seriesValue).toBeHidden();
+
+    const hoverTarget = page.locator('#chargedFeeOnlyPlot .u-over');
+    const box = await hoverTarget.boundingBox();
+    if (!box) throw new Error('Charged fee plot overlay not found');
+    await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.5);
+
+    await expect(valueRow).toBeVisible();
+    await expect(seriesValue).toBeVisible();
+  });
+
   test('save current run for taiko p-only and eip1559', async ({ page }) => {
     await openSimulator(page, 'current365', 'Current 365d');
 

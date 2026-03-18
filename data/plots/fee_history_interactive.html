@@ -347,6 +347,33 @@
       border-radius: 6px;
       padding: 1px 4px;
     }
+    .uplot .u-inline.u-live thead,
+    .uplot .u-inline.u-live .u-series:first-child {
+      display: none;
+    }
+    .u-legend .u-marker {
+      width: 1.35em;
+      height: 0;
+      margin-right: 6px;
+      border-left-width: 0 !important;
+      border-right-width: 0 !important;
+      border-bottom-width: 0 !important;
+      border-top-width: 3px !important;
+      border-radius: 999px;
+      background: transparent !important;
+    }
+    .uplot:not(.legend-live-active) .u-inline.u-live .u-series .u-value {
+      display: none;
+    }
+    .uplot:not(.legend-live-active) .u-inline.u-live .u-series th::after {
+      content: none;
+    }
+    .uplot.legend-live-active .u-inline.u-live thead {
+      display: table-header-group;
+    }
+    .uplot.legend-live-active .u-inline.u-live .u-series:first-child {
+      display: inline-block;
+    }
   </style>
 </head>
 <body>

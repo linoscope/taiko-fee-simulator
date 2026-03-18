@@ -689,8 +689,11 @@
   }
 
   function onSetCursor(u) {
-    if (!hoverText) return;
     const idx = u && u.cursor ? u.cursor.idx : null;
+    if (u && u.root && u.root.classList) {
+      u.root.classList.toggle('legend-live-active', idx != null && idx >= 0 && idx < blocks.length);
+    }
+    if (!hoverText) return;
     if (idx == null || idx < 0 || idx >= blocks.length) {
       hoverText.textContent = '';
       return;
