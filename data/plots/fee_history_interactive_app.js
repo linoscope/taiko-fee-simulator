@@ -674,6 +674,44 @@
     return `${Number(blockNum).toLocaleString()} (~${fmtApproxUtc(ms)})`;
   }
 
+  function formatBlockAxisValues(u, vals) {
+    if (!Array.isArray(vals) || !vals.length) return vals;
+    let minStep = Infinity;
+    for (let i = 1; i < vals.length; i++) {
+      const step = Math.abs(vals[i] - vals[i - 1]);
+      if (step > 0 && step < minStep) minStep = step;
+    }
+    if (!Number.isFinite(minStep)) minStep = 0;
+
+    const xScale = u && u.scales ? u.scales.x : null;
+    const visibleRange = xScale && Number.isFinite(xScale.min) && Number.isFinite(xScale.max)
+      ? Math.abs(xScale.max - xScale.min)
+      : Infinity;
+
+    if (visibleRange <= 30000 || minStep < 10000) {
+      return vals.map(function (v) { return Number(v).toLocaleString(); });
+    }
+
+    let frac = 1;
+    if (minStep < 100000) frac = 3;
+    else if (minStep < 1000000) frac = 2;
+
+    return vals.map(function (v) {
+      return `${Number(v / 1e6).toLocaleString(undefined, {
+        minimumFractionDigits: frac,
+        maximumFractionDigits: frac
+      })}M`;
+    });
+  }
+
+  function makeBlockAxis() {
+    return {
+      label: 'L1 Block Number',
+      space: 90,
+      values: formatBlockAxisValues
+    };
+  }
+
   function updateRangeText(a, b) {
     rangeText.textContent = `Showing blocks ${a.toLocaleString()} - ${b.toLocaleString()} (${(b - a + 1).toLocaleString()} blocks)`;
     if (!rangeDateText) return;
@@ -2012,7 +2050,7 @@
 
     const run = {
       visible: true,
-      solidLine: false,
+      solidLine: true,
       opacity: DEFAULT_SAVED_RUN_OPACITY,
       name: '',
       datasetId: draft.datasetId,
@@ -2465,7 +2503,7 @@
         { label: title, stroke: strokeColor, width: 1 }
       ],
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: yLabel }
       ],
       cursor: {
@@ -2506,7 +2544,7 @@
         }
       ],
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'ETH' }
       ],
       cursor: {
@@ -2542,7 +2580,7 @@
         }
       ],
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'ETH / proposal' }
       ],
       cursor: {
@@ -2577,7 +2615,7 @@
       scales: { x: { time: false } },
       series,
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'gwei / L2 gas' }
       ],
       cursor: {
@@ -2610,7 +2648,7 @@
       scales: { x: { time: false } },
       series,
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'gwei / L2 gas' }
       ],
       cursor: {
@@ -2644,7 +2682,7 @@
       scales: { x: { time: false } },
       series,
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'ETH' }
       ],
       cursor: {
@@ -2673,7 +2711,7 @@
         { label: 'Charged fee (gwei/L2 gas)', stroke: '#16a34a', width: 1.4 }
       ],
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'gwei / L2 gas' }
       ],
       cursor: {
@@ -2700,7 +2738,7 @@
         { label: 'Integral I', stroke: '#7c2d12', width: 1.0 }
       ],
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'Mixed units' }
       ],
       cursor: {
@@ -2772,7 +2810,7 @@
         { label: 'L2 gas / L2 block (target)', stroke: '#94a3b8', width: 1.0 }
       ],
       axes: [
-        { label: 'L1 Block Number' },
+        makeBlockAxis(),
         { label: 'gas / L2 block' }
       ],
       cursor: {
