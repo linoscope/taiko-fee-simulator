@@ -99,6 +99,8 @@ test.describe('fee_history_interactive visual regression', () => {
     await expect(page.locator('#savedRunsList .saved-run')).toHaveCount(1);
     await expect(page.locator('#savedRunsList')).toContainText('"feeMechanism": "taiko"');
     await expect(page.locator('#savedRunsList')).toContainText('"ki": 0');
+    await expect(page.locator('#savedRunsList')).toContainText('dotted line');
+    await expect(page.locator('#savedRunsList input[data-action="lineStyle"]').first()).toBeChecked();
 
     await page.selectOption('#feeMechanism', 'eip1559');
     await recomputeDerivedCharts(page);

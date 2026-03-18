@@ -1853,7 +1853,7 @@
             <strong>${htmlEscape(displayName)}</strong>
             <span>TPS ${tpsText}</span>
             <label><input type="checkbox" data-action="toggle" data-run-id="${run.id}" ${run.visible ? 'checked' : ''}/> show</label>
-            <label><input type="checkbox" data-action="lineStyle" data-run-id="${run.id}" ${run.solidLine ? 'checked' : ''}/> solid line</label>
+            <label><input type="checkbox" data-action="lineStyle" data-run-id="${run.id}" ${run.solidLine ? '' : 'checked'}/> dotted line</label>
             <label>opacity <select data-action="opacity" data-run-id="${run.id}">${SAVED_RUN_OPACITY_OPTIONS.map(function (v) { return '<option value="' + v + '"' + (v === run.opacity ? ' selected' : '') + '>' + (v * 100) + '%</option>'; }).join('')}</select></label>
             <label>color <input class="saved-run-color-input" type="color" data-action="color" data-run-id="${run.id}" value="${slotColor}" aria-label="Saved run color for ${htmlEscape(displayName)}" /></label>
             <label>name <input class="saved-run-name" type="text" data-action="name" data-run-id="${run.id}" value="${htmlEscape(rawName)}" placeholder="Run #${run.id}" /></label>
@@ -2937,7 +2937,7 @@
       });
     } else if (action === 'lineStyle') {
       changed = savedRunManager.updateRunById(runId, function (run) {
-        run.solidLine = Boolean(target.checked);
+        run.solidLine = !Boolean(target.checked);
       });
     } else if (action === 'opacity') {
       changed = savedRunManager.updateRunById(runId, function (run) {
